@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build V3
+name: Kerberus XP Android Build V4
 
 on:
   workflow_dispatch:
@@ -31,7 +31,27 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             build-essential cmake curl git unzip xxd \
-            ruby-full autoconf automake libtool pkg-config
+            autoconf automake libtool pkg-config
+
+      - name: Set up Ruby 3.1
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.1"
+
+      - name: Verify writable Ruby environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -v
+          which ruby
+          GEM_DEFAULT_DIR="$(ruby -rrubygems -e 'print Gem.default_dir')"
+          echo "Gem.default_dir=$GEM_DEFAULT_DIR"
+          case "$GEM_DEFAULT_DIR" in
+            /var/lib/*|/usr/lib/*)
+              echo "Ruby gem directory is not writable: $GEM_DEFAULT_DIR" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Use preinstalled Android SDK and install required packages
         shell: bash
