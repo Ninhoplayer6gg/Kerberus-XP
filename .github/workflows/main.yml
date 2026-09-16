@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build
+name: Kerberus XP Android Build V3
 
 on:
   workflow_dispatch:
@@ -33,14 +33,33 @@ jobs:
             build-essential cmake curl git unzip xxd \
             ruby-full autoconf automake libtool pkg-config
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
+      - name: Use preinstalled Android SDK and install required packages
+        shell: bash
         run: |
-          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
-          echo "$ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          test -x "$SDKMANAGER"
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+          NDK_HOME="$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
+          test -d "$NDK_HOME"
+
+          echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
+          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+          "$SDKMANAGER" --list_installed | grep -E "platforms;android-33|build-tools;33.0.2|ndk;${ANDROID_NDK_VERSION}"
 
       - name: Fetch pinned mkxp-z Android
         run: |
