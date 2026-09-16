@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build V5
+name: Kerberus XP Android Build V6
 
 on:
   workflow_dispatch:
@@ -141,6 +141,40 @@ jobs:
 
           echo "Native build directories:"
           ls -ld build-arm64* || true
+
+      - name: Force ARM64-only APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_FILE="mkxp-android/app/build.gradle"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("mkxp-android/app/build.gradle")
+          s = p.read_text()
+
+          # Limit ABI splits to ARM64 only.
+          s = re.sub(
+              r"include\s+'arm64-v8a'\s*,\s*'armeabi-v7a'",
+              "include 'arm64-v8a'",
+              s
+          )
+
+          # Add a defensive ndk abiFilter inside defaultConfig if one is not already present.
+          if "abiFilters 'arm64-v8a'" not in s:
+              s = s.replace(
+                  "defaultConfig {",
+                  "defaultConfig {\n        ndk { abiFilters 'arm64-v8a' }",
+                  1
+              )
+
+          p.write_text(s)
+          PY
+
+          echo "Patched ABI configuration:"
+          grep -nE "abiFilters|include 'arm64-v8a'|armeabi-v7a" "$GRADLE_FILE" || true
 
       - name: Build APK
         working-directory: mkxp-android
