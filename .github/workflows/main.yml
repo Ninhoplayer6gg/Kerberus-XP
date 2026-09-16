@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build V4
+name: Kerberus XP Android Build V5
 
 on:
   workflow_dispatch:
@@ -126,17 +126,31 @@ jobs:
         env:
           ARCH: linux-x86_64
         run: |
+          set -euo pipefail
           HOST=aarch64-linux-android \
           TARGET=aarch64-linux-android \
           ABI=arm64-v8a \
           LDFLAGS="-Wl,-z,max-page-size=16384" \
           make -j"$(nproc)"
 
+          # The upstream Android workflow expects this compatibility mapping
+          # before Gradle/ndkBuild starts.
+          if [ -d "build-arm64-v8a" ] && [ ! -e "build-arm64" ]; then
+            ln -s build-arm64-v8a build-arm64
+          fi
+
+          echo "Native build directories:"
+          ls -ld build-arm64* || true
+
       - name: Build APK
         working-directory: mkxp-android
         run: |
+          set -euo pipefail
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease \
+            -Pandroid.suppressUnsupportedCompileSdk=34 \
+            --no-daemon \
+            --stacktrace
 
       - name: Collect APK
         run: |
