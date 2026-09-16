@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build V6
+name: Kerberus XP Android Build V7 Signed
 
 on:
   workflow_dispatch:
@@ -176,23 +176,41 @@ jobs:
           echo "Patched ABI configuration:"
           grep -nE "abiFilters|include 'arm64-v8a'|armeabi-v7a" "$GRADLE_FILE" || true
 
-      - name: Build APK
+      - name: Build signed Debug APK
         working-directory: mkxp-android
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew assembleRelease \
+          ./gradlew assembleDebug \
             -Pandroid.suppressUnsupportedCompileSdk=34 \
             --no-daemon \
             --stacktrace
 
-      - name: Collect APK
+      - name: Collect signed APK
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
-          APK="$(find mkxp-android/app/build/outputs/apk/release -name '*.apk' | sort | head -1)"
-          test -n "$APK"
-          cp "$APK" dist/Kerberus-XP-Alpha0-unsigned.apk
-          sha256sum dist/Kerberus-XP-Alpha0-unsigned.apk > dist/Kerberus-XP-Alpha0-unsigned.apk.sha256
+
+          APK="$(find mkxp-android/app/build/outputs/apk/debug -type f \
+            \( -name '*arm64-v8a*debug*.apk' -o -name '*debug*.apk' \) \
+            | head -n 1)"
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "Signed debug APK not found." >&2
+            find mkxp-android/app/build/outputs/apk -type f -name '*.apk' -print || true
+            exit 1
+          fi
+
+          cp "$APK" dist/Kerberus-XP-Alpha1-arm64-signed.apk
+          sha256sum dist/Kerberus-XP-Alpha1-arm64-signed.apk \
+            > dist/Kerberus-XP-Alpha1-arm64-signed.apk.sha256
+
+          # Verify Android APK signature.
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose dist/Kerberus-XP-Alpha1-arm64-signed.apk
+
           ls -lh dist
 
       - name: Upload APK
@@ -200,8 +218,8 @@ jobs:
         with:
           name: Kerberus-XP-Alpha0
           path: |
-            dist/Kerberus-XP-Alpha0-unsigned.apk
-            dist/Kerberus-XP-Alpha0-unsigned.apk.sha256
+            dist/Kerberus-XP-Alpha1-arm64-signed.apk
+            dist/Kerberus-XP-Alpha1-arm64-signed.apk.sha256
           if-no-files-found: error
           retention-days: 14
           
