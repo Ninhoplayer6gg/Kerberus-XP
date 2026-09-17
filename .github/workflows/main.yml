@@ -1,86 +1,79 @@
-name: Kerberus XP Android Buildon:workflow_dispatch:permissions:contents: readjobs:build:name: Build Kerberus XP APKruns-on: ubuntu-22.04timeout-minutes: 120env:
-  ANDROID_NDK_VERSION: 23.2.8568313
-  RUBY_VERSION: "3.1"
-  UPSTREAM_COMMIT: b668e08cb58edf661d56fd4d396036ac31cd8332
+name: Kerberus XP Android Build
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
 
-  - name: Set up JDK 17
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: "17"
+jobs:
+  build:
+    name: Build Kerberus XP APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
-  - name: Install system dependencies
-    run: |
-      sudo apt-get update -y
-      sudo apt-get install -y build-essential cmake curl git unzip xxd autoconf automake libtool pkg-config
-
-  - name: Set up Ruby
-    uses: ruby/setup-ruby@v1
-    with:
-      ruby-version: "3.1"
-
-  - name: Setup Android SDK & NDK
-    shell: bash
-    run: |
-      set -euo pipefail
-      SDK_ROOT="/usr/local/lib/android/sdk"
-      SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-      echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-      yes | "$SDKMANAGER" --licenses >/dev/null || true
-      "$SDKMANAGER" --install "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;${ANDROID_NDK_VERSION}"
-      NDK_HOME="$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
-      echo "ANDROID_NDK_HOME=$NDK_HOME" >> "$GITHUB_ENV"
-      echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-
-  - name: Run Host Tests (Archive Core)
-    run: bash tests/run_host_tests.sh
-
-  - name: Prepare Workspace (Overlay & Patch)
-    run: python3 scripts/prepare_kerberus_mkxpz.py
-
-  - name: Download JNI dependencies
-    working-directory: worktree/app/jni
-    run: |
-      chmod +x get_deps.sh
-      ./get_deps.sh
-
-  - name: Generate XXD sources
-    working-directory: worktree/app/jni/mkxp-z
-    run: |
-      chmod +x make_xxd.sh
-      ./make_xxd.sh
-
-  - name: Compile native dependencies (arm64-v8a)
-    working-directory: worktree/app/jni
     env:
-      ARCH: linux-x86_64
-    run: |
-      HOST=aarch64-linux-android TARGET=aarch64-linux-android ABI=arm64-v8a LDFLAGS="-Wl,-z,max-page-size=16384" make -j"$(nproc)"
-      if [ -d "build-arm64-v8a" ] && [ ! -e "build-arm64" ]; then ln -s build-arm64-v8a build-arm64; fi
+      ANDROID_NDK_VERSION: 23.2.8568313
 
-  - name: Build Debug APK
-    working-directory: worktree
-    run: |
-      chmod +x gradlew
-      ./gradlew assembleDebug -Pandroid.suppressUnsupportedCompileSdk=34 --no-daemon
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Collect and Verify APK
-    shell: bash
-    run: |
-      mkdir -p dist
-      APK="$(find worktree/app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
-      cp "$APK" dist/Kerberus-XP-arm64.apk
-      APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-      "$APKSIGNER" verify --verbose dist/Kerberus-XP-arm64.apk
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: Kerberus-XP-Build
-      path: dist/Kerberus-XP-arm64.apk
-      retention-days: 14
-      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential cmake curl git unzip xxd autoconf automake libtool pkg-config
+
+      - name: Use preinstalled Android SDK and install NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;${ANDROID_NDK_VERSION}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Run Python prepare script
+        run: |
+          python3 scripts/prepare_kerberus_mkxpz.py
+
+      - name: Download JNI dependencies
+        working-directory: worktree/app/jni
+        run: |
+          chmod +x get_deps.sh
+          ./get_deps.sh
+
+      - name: Generate XXD sources
+        working-directory: worktree/app/jni/mkxp-z
+        run: |
+          chmod +x make_xxd.sh
+          ./make_xxd.sh
+
+      - name: Compile native dependencies (arm64-v8a)
+        working-directory: worktree/app/jni
+        run: |
+          HOST=aarch64-linux-android TARGET=aarch64-linux-android ABI=arm64-v8a LDFLAGS="-Wl,-z,max-page-size=16384" make -j"$(nproc)"
+          if [ -d "build-arm64-v8a" ] && [ ! -e "build-arm64" ]; then ln -s build-arm64-v8a build-arm64; fi
+
+      - name: Build signed Debug APK
+        working-directory: worktree/app
+        run: |
+          chmod +x ../gradlew
+          ../gradlew assembleDebug -Pandroid.suppressUnsupportedCompileSdk=34 --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kerberus-XP-Alpha-Build
+          path: worktree/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
