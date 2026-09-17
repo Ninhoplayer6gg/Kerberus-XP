@@ -1,0 +1,1 @@
+#!/usr/bin/env bash set -euo pipefail ROOT="(cd "(dirname "$0")/.." && pwd)" OUT="$ROOT/.host-test" rm -rf "$OUT" && mkdir -p "$OUT" javac -d "$OUT" "$ROOT/kerberus-overlay/app/src/main/java/com/kerberus/launcher/ProjectArchiveCore.java" "$ROOT/tests/ProjectArchiveCoreHostTest.java" java -cp "$OUT" ProjectArchiveCoreHostTest
