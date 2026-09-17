@@ -1,4 +1,4 @@
-name: Kerberus XP Android Build V7 Signed
+name: Kerberus XP Android Alpha 2 Diagnostic
 
 on:
   workflow_dispatch:
@@ -142,6 +142,94 @@ jobs:
           echo "Native build directories:"
           ls -ld build-arm64* || true
 
+      - name: Add Kerberus boot diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="mkxp-android/app/jni/mkxp-z/binding/binding-mri.cpp"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("mkxp-android/app/jni/mkxp-z/binding/binding-mri.cpp")
+          s = p.read_text()
+
+          if '#include <fstream>' not in s:
+              s = s.replace('#include <string>\n', '#include <string>\n#include <fstream>\n', 1)
+
+          marker = 'static void mriBindingExecute();\n'
+          helper = (
+              'static void kerberusBootLog(const std::string &msg)\n'
+              '{\n'
+              '    std::ofstream f("kerberus_boot.log", std::ios::app);\n'
+              '    if (f)\n'
+              '    {\n'
+              '        f << msg << std::endl;\n'
+              '        f.flush();\n'
+              '    }\n'
+              '}\n\n'
+          )
+          if 'static void kerberusBootLog(' not in s:
+              s = s.replace(marker, helper + marker, 1)
+
+          old_show = (
+              'static void showMsg(const std::string &msg)\n'
+              '{\n'
+              '\tshState->eThread().showMessageBox(msg.c_str());\n'
+              '}'
+          )
+          new_show = (
+              'static void showMsg(const std::string &msg)\n'
+              '{\n'
+              '    kerberusBootLog(std::string("MESSAGE: ") + msg);\n'
+              '\tshState->eThread().showMessageBox(msg.c_str());\n'
+              '}'
+          )
+          if old_show in s:
+              s = s.replace(old_show, new_show, 1)
+
+          sig = 'static void mriBindingExecute() {'
+          if sig in s and 'KERBERUS: mriBindingExecute begin' not in s:
+              s = s.replace(
+                  sig,
+                  sig + '\n    kerberusBootLog("KERBERUS: mriBindingExecute begin");',
+                  1
+              )
+
+          sig2 = 'static void runRMXPScripts(BacktraceData &btData) {'
+          if sig2 in s and 'KERBERUS: runRMXPScripts begin' not in s:
+              s = s.replace(
+                  sig2,
+                  sig2 + '\n    kerberusBootLog("KERBERUS: runRMXPScripts begin");',
+                  1
+              )
+
+          load_call = 'scriptArray = kernelLoadDataInt(scriptPack.c_str(), false, false);'
+          if load_call in s and 'KERBERUS: loading script pack' not in s:
+              s = s.replace(
+                  load_call,
+                  'kerberusBootLog(std::string("KERBERUS: loading script pack: ") + scriptPack);\n'
+                  '        ' + load_call + '\n'
+                  '        kerberusBootLog("KERBERUS: script pack loaded");',
+                  1
+              )
+
+          eval_sig = 'static VALUE evalHelper(evalArg *arg) {'
+          if eval_sig in s and 'KERBERUS: EVAL ' not in s:
+              s = s.replace(
+                  eval_sig,
+                  eval_sig
+                  + '\n    if (RB_TYPE_P(arg->filename, RUBY_T_STRING))\n'
+                  + '        kerberusBootLog(std::string("KERBERUS: EVAL ") + RSTRING_PTR(arg->filename));',
+                  1
+              )
+
+          p.write_text(s)
+          PY
+
+          grep -n "KERBERUS:" "$FILE"
+          grep -n "kerberusBootLog" "$FILE" | head -n 20
+
       - name: Force ARM64-only APK
         shell: bash
         run: |
@@ -202,14 +290,14 @@ jobs:
             exit 1
           fi
 
-          cp "$APK" dist/Kerberus-XP-Alpha1-arm64-signed.apk
-          sha256sum dist/Kerberus-XP-Alpha1-arm64-signed.apk \
-            > dist/Kerberus-XP-Alpha1-arm64-signed.apk.sha256
+          cp "$APK" dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk
+          sha256sum dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk \
+            > dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk.sha256
 
           # Verify Android APK signature.
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$APKSIGNER"
-          "$APKSIGNER" verify --verbose dist/Kerberus-XP-Alpha1-arm64-signed.apk
+          "$APKSIGNER" verify --verbose dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk
 
           ls -lh dist
 
@@ -218,8 +306,8 @@ jobs:
         with:
           name: Kerberus-XP-Alpha0
           path: |
-            dist/Kerberus-XP-Alpha1-arm64-signed.apk
-            dist/Kerberus-XP-Alpha1-arm64-signed.apk.sha256
+            dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk
+            dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk.sha256
           if-no-files-found: error
           retention-days: 14
           
