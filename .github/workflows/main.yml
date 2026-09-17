@@ -97,8 +97,8 @@ jobs:
           gradle = Path("mkxp-android/app/build.gradle")
           text = gradle.read_text(encoding="utf-8")
           text = text.replace('applicationId "com.hatkid.mkxpz"', 'applicationId "com.kerberus.xp"')
-          text = re.sub(r'versionCode\s+\d+', 'versionCode 1000', text)
-          text = re.sub(r'versionName\s+"[^"]+"', 'versionName "0.0.1-alpha"', text)
+          text = re.sub(r'versionCode\s+\d+', 'versionCode 2000', text)
+          text = re.sub(r'versionName\s+"[^"]+"', 'versionName "0.0.2-diagnostic"', text)
           text = text.replace('archivesBaseName = "mkxp-z-$versionName"', 'archivesBaseName = "Kerberus-XP-$versionName"')
           gradle.write_text(text, encoding="utf-8")
 
@@ -108,6 +108,15 @@ jobs:
               s = re.sub(r'<string name="app_name">.*?</string>', '<string name="app_name">Kerberus XP</string>', s)
               strings.write_text(s, encoding="utf-8")
           PY
+
+      - name: Add Kerberus boot diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKcCA9IFBhdGgoIm1reHAtYW5kcm9pZC9hcHAvam5pL21reHAtei9iaW5kaW5nL2JpbmRpbmctbXJpLmNwcCIpCnMgPSBwLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKQoKZGVmIG11c3RfcmVwbGFjZShvbGQsIG5ldywgbGFiZWwpOgogICAgZ2xvYmFsIHMKICAgIGlmIG9sZCBub3QgaW4gczoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KCJNaXNzaW5nIHBhdGNoIGFuY2hvcjogIiArIGxhYmVsKQogICAgcyA9IHMucmVwbGFjZShvbGQsIG5ldywgMSkKCiMgSW5jbHVkZXMKaWYgJyNpbmNsdWRlIDxmc3RyZWFtPicgbm90IGluIHM6CiAgICBtdXN0X3JlcGxhY2UoCiAgICAgICAgJyNpbmNsdWRlIDx2ZWN0b3I+XG4nLAogICAgICAgICcjaW5jbHVkZSA8dmVjdG9yPlxuI2luY2x1ZGUgPGZzdHJlYW0+XG4jaW5jbHVkZSA8c3N0cmVhbT5cbicsCiAgICAgICAgJ2luY2x1ZGUgdmVjdG9yJwogICAgKQoKIyBMb2dnaW5nIGhlbHBlcgppZiAnc3RhdGljIHZvaWQga2VyYmVydXNCb290TG9nKCcgbm90IGluIHM6CiAgICBtdXN0X3JlcGxhY2UoCiAgICAgICAgJ3N0YXRpYyB2b2lkIG1yaUJpbmRpbmdFeGVjdXRlKCk7XG4nLAogICAgICAgICdzdGF0aWMgdm9pZCBrZXJiZXJ1c0Jvb3RMb2coY29uc3Qgc3RkOjpzdHJpbmcgJm1zZylcbicKICAgICAgICAne1xuJwogICAgICAgICcgICAgc3RkOjpvZnN0cmVhbSBvdXQoImtlcmJlcnVzX2Jvb3QubG9nIiwgc3RkOjppb3M6Om91dCB8IHN0ZDo6aW9zOjphcHApO1xuJwogICAgICAgICcgICAgaWYgKCFvdXQuZ29vZCgpKVxuJwogICAgICAgICcgICAgICAgIHJldHVybjtcbicKICAgICAgICAnICAgIG91dCA8PCBtc2cgPDwgc3RkOjplbmRsO1xuJwogICAgICAgICcgICAgb3V0LmZsdXNoKCk7XG4nCiAgICAgICAgJ31cblxuJwogICAgICAgICdzdGF0aWMgdm9pZCBtcmlCaW5kaW5nRXhlY3V0ZSgpO1xuJywKICAgICAgICAnbXJpQmluZGluZ0V4ZWN1dGUgZGVjbGFyYXRpb24nCiAgICApCgojIHJ1blJNWFBTY3JpcHRzIGVudHJ5Cm11c3RfcmVwbGFjZSgKICAgICdzdGF0aWMgdm9pZCBydW5STVhQU2NyaXB0cyhCYWNrdHJhY2VEYXRhICZidERhdGEpIHtcbicKICAgICcgICAgY29uc3QgQ29uZmlnICZjb25mID0gc2hTdGF0ZS0+cnREYXRhKCkuY29uZmlnO1xuJwogICAgJyAgICBjb25zdCBzdGQ6OnN0cmluZyAmc2NyaXB0UGFjayA9IGNvbmYuZ2FtZS5zY3JpcHRzO1xuJywKICAgICdzdGF0aWMgdm9pZCBydW5STVhQU2NyaXB0cyhCYWNrdHJhY2VEYXRhICZidERhdGEpIHtcbicKICAgICcgICAgY29uc3QgQ29uZmlnICZjb25mID0gc2hTdGF0ZS0+cnREYXRhKCkuY29uZmlnO1xuJwogICAgJyAgICBjb25zdCBzdGQ6OnN0cmluZyAmc2NyaXB0UGFjayA9IGNvbmYuZ2FtZS5zY3JpcHRzO1xuJwogICAgJyAgICBrZXJiZXJ1c0Jvb3RMb2coc3RkOjpzdHJpbmcoIlNDUklQVFNfUEFDSz0iKSArIHNjcmlwdFBhY2spO1xuJywKICAgICdydW5STVhQU2NyaXB0cyBlbnRyeScKKQoKIyBTY3JpcHQgY291bnQKbXVzdF9yZXBsYWNlKAogICAgJyAgICBsb25nIHNjcmlwdENvdW50ID0gUkFSUkFZX0xFTihzY3JpcHRBcnJheSk7XG4nLAogICAgJyAgICBsb25nIHNjcmlwdENvdW50ID0gUkFSUkFZX0xFTihzY3JpcHRBcnJheSk7XG4nCiAgICAnICAgIGtlcmJlcnVzQm9vdExvZyhzdGQ6OnN0cmluZygiU0NSSVBUU19DT1VOVD0iKSArIHN0ZDo6dG9fc3RyaW5nKHNjcmlwdENvdW50KSk7XG4nLAogICAgJ3NjcmlwdENvdW50JwopCgojIERlY29kZSBjb21wbGV0ZQptdXN0X3JlcGxhY2UoCiAgICAnICAgIC8qIEV4ZWN1dGUgcHJlbG9hZGVkIHNjcmlwdHMgKi9cbicsCiAgICAnICAgIGtlcmJlcnVzQm9vdExvZygiU0NSSVBUU19ERUNPREVfT0siKTtcbicKICAgICcgICAgLyogRXhlY3V0ZSBwcmVsb2FkZWQgc2NyaXB0cyAqL1xuJywKICAgICdwcmVsb2FkZWQgc2NyaXB0cyBtYXJrZXInCikKCiMgUGVyLXNjcmlwdCBldmFsCm9sZF9ldmFsID0gKAogICAgJyAgICAgICAgICAgIGludCBzdGF0ZTtcbicKICAgICcgICAgICAgICAgICBcbicKICAgICcgICAgICAgICAgICBldmFsU3RyaW5nKHN0cmluZywgZm5hbWUsICZzdGF0ZSk7XG4nCiAgICAnICAgICAgICAgICAgaWYgKHN0YXRlKVxuJwogICAgJyAgICAgICAgICAgICAgICBicmVhaztcbicKKQpuZXdfZXZhbCA9ICgKICAgICcgICAgICAgICAgICBpbnQgc3RhdGU7XG4nCiAgICAnICAgICAgICAgICAgXG4nCiAgICAnICAgICAgICAgICAge1xuJwogICAgJyAgICAgICAgICAgICAgICBzdGQ6Om9zdHJpbmdzdHJlYW0ga2xvZztcbicKICAgICcgICAgICAgICAgICAgICAga2xvZyA8PCAiRVhFQyAiIDw8IGkgPDwgIjoiIDw8IHNjcmlwdE5hbWU7XG4nCiAgICAnICAgICAgICAgICAgICAgIGtlcmJlcnVzQm9vdExvZyhrbG9nLnN0cigpKTtcbicKICAgICcgICAgICAgICAgICB9XG4nCiAgICAnICAgICAgICAgICAgZXZhbFN0cmluZyhzdHJpbmcsIGZuYW1lLCAmc3RhdGUpO1xuJwogICAgJyAgICAgICAgICAgIGlmIChzdGF0ZSkge1xuJwogICAgJyAgICAgICAgICAgICAgICBzdGQ6Om9zdHJpbmdzdHJlYW0ga2xvZztcbicKICAgICcgICAgICAgICAgICAgICAga2xvZyA8PCAiRkFJTCAiIDw8IGkgPDwgIjoiIDw8IHNjcmlwdE5hbWUgPDwgIiBzdGF0ZT0iIDw8IHN0YXRlO1xuJwogICAgJyAgICAgICAgICAgICAgICBrZXJiZXJ1c0Jvb3RMb2coa2xvZy5zdHIoKSk7XG4nCiAgICAnICAgICAgICAgICAgICAgIGJyZWFrO1xuJwogICAgJyAgICAgICAgICAgIH0gZWxzZSB7XG4nCiAgICAnICAgICAgICAgICAgICAgIHN0ZDo6b3N0cmluZ3N0cmVhbSBrbG9nO1xuJwogICAgJyAgICAgICAgICAgICAgICBrbG9nIDw8ICJPSyAiIDw8IGkgPDwgIjoiIDw8IHNjcmlwdE5hbWU7XG4nCiAgICAnICAgICAgICAgICAgICAgIGtlcmJlcnVzQm9vdExvZyhrbG9nLnN0cigpKTtcbicKICAgICcgICAgICAgICAgICB9XG4nCikKbXVzdF9yZXBsYWNlKG9sZF9ldmFsLCBuZXdfZXZhbCwgJ3NjcmlwdCBldmFsIGJsb2NrJykKCiMgTG9nIGZvcm1hdHRlZCBSdWJ5IGV4Y2VwdGlvbiBiZWZvcmUgc2hvd2luZyBpdAptdXN0X3JlcGxhY2UoCiAgICAnICAgIHNob3dNc2cobXMpO1xuJwogICAgJ31cblxuJwogICAgJ3N0YXRpYyB2b2lkIG1yaUJpbmRpbmdFeGVjdXRlKCkge1xuJywKICAgICcgICAga2VyYmVydXNCb290TG9nKHN0ZDo6c3RyaW5nKCJTSE9XX0VYQ0VQVElPTiAiKSArIG1zLmNfc3RyKCkpO1xuJwogICAgJyAgICBzaG93TXNnKG1zKTtcbicKICAgICd9XG5cbicKICAgICdzdGF0aWMgdm9pZCBtcmlCaW5kaW5nRXhlY3V0ZSgpIHtcbicsCiAgICAnc2hvd0V4YyB0YWlsJwopCgojIFN0YXJ0L3Jlc2V0IGxvZwptdXN0X3JlcGxhY2UoCiAgICAnc3RhdGljIHZvaWQgbXJpQmluZGluZ0V4ZWN1dGUoKSB7XG4nCiAgICAnICAgIENvbmZpZyAmY29uZiA9IHNoU3RhdGUtPnJ0RGF0YSgpLmNvbmZpZztcbicKICAgICcgICAgXG4nLAogICAgJ3N0YXRpYyB2b2lkIG1yaUJpbmRpbmdFeGVjdXRlKCkge1xuJwogICAgJyAgICBDb25maWcgJmNvbmYgPSBzaFN0YXRlLT5ydERhdGEoKS5jb25maWc7XG4nCiAgICAnICAgIHtcbicKICAgICcgICAgICAgIHN0ZDo6b2ZzdHJlYW0gcmVzZXQoImtlcmJlcnVzX2Jvb3QubG9nIiwgc3RkOjppb3M6Om91dCB8IHN0ZDo6aW9zOjp0cnVuYyk7XG4nCiAgICAnICAgICAgICByZXNldCA8PCAiS0VSQkVSVVNfQk9PVF9TVEFSVCIgPDwgc3RkOjplbmRsO1xuJwogICAgJyAgICB9XG4nCiAgICAnICAgIGtlcmJlcnVzQm9vdExvZygiUlVCWV9JTklUX0JFR0lOIik7XG4nCiAgICAnICAgIFxuJywKICAgICdtcmlCaW5kaW5nRXhlY3V0ZSBzdGFydCcKKQoKIyBSdWJ5IGluaXQgT0sKbXVzdF9yZXBsYWNlKAogICAgJyAgICByYl9lbmNfc2V0X2RlZmF1bHRfZXh0ZXJuYWwocmJfZW5jX2Zyb21fZW5jb2RpbmcocmJfdXRmOF9lbmNvZGluZygpKSk7XG4nLAogICAgJyAgICByYl9lbmNfc2V0X2RlZmF1bHRfZXh0ZXJuYWwocmJfZW5jX2Zyb21fZW5jb2RpbmcocmJfdXRmOF9lbmNvZGluZygpKSk7XG4nCiAgICAnICAgIGtlcmJlcnVzQm9vdExvZygiUlVCWV9JTklUX09LIik7XG4nLAogICAgJ1J1YnkgaW5pdCBjb21wbGV0ZScKKQoKIyBCaW5kaW5ncwptdXN0X3JlcGxhY2UoCiAgICAnICAgIG1yaUJpbmRpbmdJbml0KCk7XG4nCiAgICAnICAgIFxuJwogICAgJyAgICBzdGQ6OnN0cmluZyAmY3VzdG9tU2NyaXB0ID0gY29uZi5jdXN0b21TY3JpcHQ7XG4nLAogICAgJyAgICBrZXJiZXJ1c0Jvb3RMb2coIkJJTkRJTkdTX0lOSVRfQkVHSU4iKTtcbicKICAgICcgICAgbXJpQmluZGluZ0luaXQoKTtcbicKICAgICcgICAga2VyYmVydXNCb290TG9nKCJCSU5ESU5HU19JTklUX09LIik7XG4nCiAgICAnICAgIFxuJwogICAgJyAgICBzdGQ6OnN0cmluZyAmY3VzdG9tU2NyaXB0ID0gY29uZi5jdXN0b21TY3JpcHQ7XG4nLAogICAgJ2JpbmRpbmcgaW5pdCcKKQoKIyBHYW1lIHNjcmlwdHMgd3JhcHBlcgptdXN0X3JlcGxhY2UoCiAgICAnICAgIGlmICghY3VzdG9tU2NyaXB0LmVtcHR5KCkpXG4nCiAgICAnICAgICAgICBydW5DdXN0b21TY3JpcHQoY3VzdG9tU2NyaXB0KTtcbicKICAgICcgICAgZWxzZVxuJwogICAgJyAgICAgICAgcnVuUk1YUFNjcmlwdHMoYnREYXRhKTtcbicsCiAgICAnICAgIGlmICghY3VzdG9tU2NyaXB0LmVtcHR5KCkpXG4nCiAgICAnICAgICAgICBydW5DdXN0b21TY3JpcHQoY3VzdG9tU2NyaXB0KTtcbicKICAgICcgICAgZWxzZSB7XG4nCiAgICAnICAgICAgICBrZXJiZXJ1c0Jvb3RMb2coIkdBTUVfU0NSSVBUU19CRUdJTiIpO1xuJwogICAgJyAgICAgICAgcnVuUk1YUFNjcmlwdHMoYnREYXRhKTtcbicKICAgICcgICAgICAgIGtlcmJlcnVzQm9vdExvZygiR0FNRV9TQ1JJUFRTX1JFVFVSTkVEIik7XG4nCiAgICAnICAgIH1cbicsCiAgICAncnVuIGdhbWUgc2NyaXB0cycKKQoKIyBDbGVhbnVwCm11c3RfcmVwbGFjZSgKICAgICcgICAgcnVieV9jbGVhbnVwKDApO1xuJwogICAgJyAgICBcbicKICAgICcgICAgc2hTdGF0ZS0+cnREYXRhKCkucnFUZXJtQWNrLnNldCgpO1xuJywKICAgICcgICAga2VyYmVydXNCb290TG9nKCJSVUJZX0NMRUFOVVBfQkVHSU4iKTtcbicKICAgICcgICAgcnVieV9jbGVhbnVwKDApO1xuJwogICAgJyAgICBrZXJiZXJ1c0Jvb3RMb2coIktFUkJFUlVTX0JPT1RfRU5EIik7XG4nCiAgICAnICAgIFxuJwogICAgJyAgICBzaFN0YXRlLT5ydERhdGEoKS5ycVRlcm1BY2suc2V0KCk7XG4nLAogICAgJ3J1YnkgY2xlYW51cCcKKQoKcC53cml0ZV90ZXh0KHMsIGVuY29kaW5nPSJ1dGYtOCIpCgpyZXF1aXJlZCA9IFsKICAgICJLRVJCRVJVU19CT09UX1NUQVJUIiwKICAgICJSVUJZX0lOSVRfQkVHSU4iLAogICAgIlJVQllfSU5JVF9PSyIsCiAgICAiQklORElOR1NfSU5JVF9PSyIsCiAgICAiR0FNRV9TQ1JJUFRTX0JFR0lOIiwKICAgICJTQ1JJUFRTX0NPVU5UPSIsCiAgICAiU0NSSVBUU19ERUNPREVfT0siLAogICAgJ2tsb2cgPDwgIkVYRUMgIicsCiAgICAna2xvZyA8PCAiRkFJTCAiJywKICAgICJTSE9XX0VYQ0VQVElPTiIsCiAgICAiR0FNRV9TQ1JJUFRTX1JFVFVSTkVEIiwKXQpmb3IgbWFya2VyIGluIHJlcXVpcmVkOgogICAgaWYgbWFya2VyIG5vdCBpbiBzOgogICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoIkRpYWdub3N0aWMgbWFya2VyIG1pc3Npbmc6ICIgKyBtYXJrZXIpCgpwcmludCgiS2VyYmVydXMgZGlhZ25vc3RpY3MgcGF0Y2ggYXBwbGllZCBzdWNjZXNzZnVsbHkiKQo=" | base64 -d > /tmp/kerberus_diag_patch.py
+          python3 /tmp/kerberus_diag_patch.py
+          grep -n "KERBERUS_BOOT_START\|SCRIPTS_DECODE_OK\|SHOW_EXCEPTION" \
+            mkxp-android/app/jni/mkxp-z/binding/binding-mri.cpp
 
       - name: Download JNI dependencies
         working-directory: mkxp-android/app/jni
@@ -141,94 +150,6 @@ jobs:
 
           echo "Native build directories:"
           ls -ld build-arm64* || true
-
-      - name: Add Kerberus boot diagnostics
-        shell: bash
-        run: |
-          set -euo pipefail
-          FILE="mkxp-android/app/jni/mkxp-z/binding/binding-mri.cpp"
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("mkxp-android/app/jni/mkxp-z/binding/binding-mri.cpp")
-          s = p.read_text()
-
-          if '#include <fstream>' not in s:
-              s = s.replace('#include <string>\n', '#include <string>\n#include <fstream>\n', 1)
-
-          marker = 'static void mriBindingExecute();\n'
-          helper = (
-              'static void kerberusBootLog(const std::string &msg)\n'
-              '{\n'
-              '    std::ofstream f("kerberus_boot.log", std::ios::app);\n'
-              '    if (f)\n'
-              '    {\n'
-              '        f << msg << std::endl;\n'
-              '        f.flush();\n'
-              '    }\n'
-              '}\n\n'
-          )
-          if 'static void kerberusBootLog(' not in s:
-              s = s.replace(marker, helper + marker, 1)
-
-          old_show = (
-              'static void showMsg(const std::string &msg)\n'
-              '{\n'
-              '\tshState->eThread().showMessageBox(msg.c_str());\n'
-              '}'
-          )
-          new_show = (
-              'static void showMsg(const std::string &msg)\n'
-              '{\n'
-              '    kerberusBootLog(std::string("MESSAGE: ") + msg);\n'
-              '\tshState->eThread().showMessageBox(msg.c_str());\n'
-              '}'
-          )
-          if old_show in s:
-              s = s.replace(old_show, new_show, 1)
-
-          sig = 'static void mriBindingExecute() {'
-          if sig in s and 'KERBERUS: mriBindingExecute begin' not in s:
-              s = s.replace(
-                  sig,
-                  sig + '\n    kerberusBootLog("KERBERUS: mriBindingExecute begin");',
-                  1
-              )
-
-          sig2 = 'static void runRMXPScripts(BacktraceData &btData) {'
-          if sig2 in s and 'KERBERUS: runRMXPScripts begin' not in s:
-              s = s.replace(
-                  sig2,
-                  sig2 + '\n    kerberusBootLog("KERBERUS: runRMXPScripts begin");',
-                  1
-              )
-
-          load_call = 'scriptArray = kernelLoadDataInt(scriptPack.c_str(), false, false);'
-          if load_call in s and 'KERBERUS: loading script pack' not in s:
-              s = s.replace(
-                  load_call,
-                  'kerberusBootLog(std::string("KERBERUS: loading script pack: ") + scriptPack);\n'
-                  '        ' + load_call + '\n'
-                  '        kerberusBootLog("KERBERUS: script pack loaded");',
-                  1
-              )
-
-          eval_sig = 'static VALUE evalHelper(evalArg *arg) {'
-          if eval_sig in s and 'KERBERUS: EVAL ' not in s:
-              s = s.replace(
-                  eval_sig,
-                  eval_sig
-                  + '\n    if (RB_TYPE_P(arg->filename, RUBY_T_STRING))\n'
-                  + '        kerberusBootLog(std::string("KERBERUS: EVAL ") + RSTRING_PTR(arg->filename));',
-                  1
-              )
-
-          p.write_text(s)
-          PY
-
-          grep -n "KERBERUS:" "$FILE"
-          grep -n "kerberusBootLog" "$FILE" | head -n 20
 
       - name: Force ARM64-only APK
         shell: bash
@@ -304,7 +225,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Kerberus-XP-Alpha0
+          name: Kerberus-XP-Alpha2-Diagnostic
           path: |
             dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk
             dist/Kerberus-XP-Alpha2-Diagnostic-arm64-signed.apk.sha256
