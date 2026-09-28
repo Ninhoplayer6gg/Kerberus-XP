@@ -40,7 +40,8 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/_kerberus"
           unzip -q "$SOURCE_ZIP" -d "$GITHUB_WORKSPACE/_kerberus"
           test -f "$PROJECT_DIR/app/build.gradle"
-          grep -q 'versionName "6.1.2-landscape-integration"' "$PROJECT_DIR/app/build.gradle"
+          grep -q 'versionName "6.1.2-landscape-integration"' \
+            "$PROJECT_DIR/app/build.gradle"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -53,10 +54,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # GitHub's ubuntu-22.04 runner already includes the Android SDK.
-          # Do not use android-actions/setup-android here: its default `tools`
-          # package is obsolete and caused the previous build to fail before
-          # Kerberus even reached the NDK stage.
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           export ANDROID_HOME="$SDK_ROOT"
           export ANDROID_SDK_ROOT="$SDK_ROOT"
@@ -76,18 +73,21 @@ jobs:
           if [ -z "$SDKMANAGER" ]; then
             SDKMANAGER="$(command -v sdkmanager || true)"
           fi
-          test -n "$SDKMANAGER" || { echo "ERRO: sdkmanager nao encontrado"; exit 1; }
+
+          test -n "$SDKMANAGER" || {
+            echo "ERRO: sdkmanager nao encontrado"
+            exit 1
+          }
 
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-          # Accept only through sdkmanager's stdin; ignore SIGPIPE from `yes`
-          # after sdkmanager has consumed all answers.
           set +o pipefail
           yes | "$SDKMANAGER" --licenses >/dev/null
           LICENSE_RC=${PIPESTATUS[1]}
           set -o pipefail
+
           if [ "$LICENSE_RC" -ne 0 ]; then
             echo "ERRO: sdkmanager --licenses retornou $LICENSE_RC"
             exit "$LICENSE_RC"
@@ -100,10 +100,8 @@ jobs:
             "ndk;${NDK_VERSION}"
 
           test -d "$SDK_ROOT/ndk/${NDK_VERSION}"
-          test -x "$SDK_ROOT/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
-
-          "$SDKMANAGER" --list_installed | grep -E \
-            "platform-tools|platforms;android-33|build-tools;33.0.2|ndk;${NDK_VERSION}" || true
+          test -x \
+            "$SDK_ROOT/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
 
       - name: Install host build tools
         shell: bash
@@ -118,9 +116,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
           TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+
           test -x "$TC/bin/aarch64-linux-android${ANDROID_API}-clang"
+
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
           echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
@@ -152,44 +153,84 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The 6.1.2 checkpoint contains launcher hooks used by the Termux build.
-          # On GitHub they are neutral wrappers around the NDK compiler.
           mkdir -p .kerberus-termux
+
           cat > .kerberus-termux/c-launcher.sh <<'EOF'
           #!/usr/bin/env bash
           exec "$@"
           EOF
-          cp .kerberus-termux/c-launcher.sh .kerberus-termux/cxx-launcher.sh
+
+          cp .kerberus-termux/c-launcher.sh \
+            .kerberus-termux/cxx-launcher.sh
           chmod +x .kerberus-termux/*-launcher.sh
 
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path("Makefile")
           s = p.read_text()
 
-          old = '''OPENAL_CONFIGURE_ARGS := \\\n\t-DALSOFT_REQUIRE_OPENSL=ON \\\n\t-DALSOFT_EXAMPLES=OFF \\\n\t-DALSOFT_UTILS=OFF\n'''
-          new = '''OPENAL_CONFIGURE_ARGS := \\\n\t-DALSOFT_REQUIRE_OPENSL=ON \\\n\t-DALSOFT_BACKEND_OPENSL=ON \\\n\t-DALSOFT_EXAMPLES=OFF \\\n\t-DALSOFT_UTILS=OFF\n'''
+          old = """OPENAL_CONFIGURE_ARGS := \\
+          \t-DALSOFT_REQUIRE_OPENSL=ON \\
+          \t-DALSOFT_EXAMPLES=OFF \\
+          \t-DALSOFT_UTILS=OFF
+          """
+
+          new = """OPENAL_CONFIGURE_ARGS := \\
+          \t-DALSOFT_REQUIRE_OPENSL=ON \\
+          \t-DALSOFT_BACKEND_OPENSL=ON \\
+          \t-DALSOFT_EXAMPLES=OFF \\
+          \t-DALSOFT_UTILS=OFF
+          """
+
           if old in s:
               s = s.replace(old, new, 1)
 
-          # Pixman 0.42.2 AArch64 hand-written assembly expects GNU as syntax.
-          # NDK r23 uses LLVM's integrated assembler, so keep the portable paths.
-          old_pixman = './configure $(CONFIGURE_ARGS) --enable-static --disable-shared --with-pic'
-          new_pixman = './configure $(CONFIGURE_ARGS) --enable-static --disable-shared --with-pic --disable-arm-a64-neon'
+          old_pixman = (
+              "./configure $(CONFIGURE_ARGS) "
+              "--enable-static --disable-shared --with-pic"
+          )
+
+          new_pixman = (
+              "./configure $(CONFIGURE_ARGS) "
+              "--enable-static --disable-shared --with-pic "
+              "--disable-arm-a64-neon"
+          )
+
           if old_pixman in s:
               s = s.replace(old_pixman, new_pixman, 1)
 
-          # Ruby 3.1 cross-install inherits Ubuntu RubyGems default /var/lib/gems.
-          # mkxp-z needs Ruby itself and stdlib, not the packaged default/bundled gems.
-          old_ruby_install = 'cd ruby; make -j$(NPROC); make install'
-          new_ruby_install = 'cd ruby; make -j$(NPROC); make install-nodoc INSTRUBY_OPTS="--exclude=default-gems --exclude=bundled-gems"'
+          old_ruby_install = (
+              "cd ruby; make -j$(NPROC); make install"
+          )
+
+          new_ruby_install = (
+              "cd ruby; make -j$(NPROC); "
+              "make install-nodoc "
+              "INSTRUBY_OPTS=\"--exclude=default-gems "
+              "--exclude=bundled-gems\""
+          )
+
           if old_ruby_install in s:
               s = s.replace(old_ruby_install, new_ruby_install, 1)
 
-          old = '\tcd openssl; CFLAGS="-Wno-macro-redefined" ./Configure $(OPENSSL_TARGET) \\\n'
-          new = '\tcd openssl; PATH="$(TOOLCHAIN)/bin:$$PATH" ANDROID_NDK_ROOT="$(NDK)" ANDROID_NDK_HOME="$(NDK)" CFLAGS="-Wno-macro-redefined" ./Configure $(OPENSSL_TARGET) \\\n'
-          if old in s:
-              s = s.replace(old, new, 1)
+          old_openssl = (
+              '\tcd openssl; '
+              'CFLAGS="-Wno-macro-redefined" '
+              './Configure $(OPENSSL_TARGET) \\\n'
+          )
+
+          new_openssl = (
+              '\tcd openssl; '
+              'PATH="$(TOOLCHAIN)/bin:$$PATH" '
+              'ANDROID_NDK_ROOT="$(NDK)" '
+              'ANDROID_NDK_HOME="$(NDK)" '
+              'CFLAGS="-Wno-macro-redefined" '
+              './Configure $(OPENSSL_TARGET) \\\n'
+          )
+
+          if old_openssl in s:
+              s = s.replace(old_openssl, new_openssl, 1)
 
           p.write_text(s)
           PY
@@ -199,17 +240,22 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}/app/jni
         run: |
           set -euo pipefail
+
           export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           export NPROC="$(nproc)"
 
           : > "$GITHUB_WORKSPACE/native-modern.log"
+
           for target in cpufeatures pixman iconv openal openssl ruby; do
-            echo "========== KERBERUS: building $target ==========" | tee -a "$GITHUB_WORKSPACE/native-modern.log"
+            echo "========== KERBERUS: building $target ==========" \
+              | tee -a "$GITHUB_WORKSPACE/native-modern.log"
+
             HOST=aarch64-linux-android \
             TARGET=aarch64-linux-android \
             ABI=arm64-v8a \
-            make -j1 "$target" 2>&1 | tee -a "$GITHUB_WORKSPACE/native-modern.log"
+            make -j1 "$target" 2>&1 \
+              | tee -a "$GITHUB_WORKSPACE/native-modern.log"
           done
 
           test -s build-arm64-v8a/lib/libpixman-1.a
@@ -238,11 +284,14 @@ jobs:
 
           rm -rf "$R18"
 
-          git clone -q -b ruby_1_8 https://github.com/joiplay/ruby "$R18"
+          git clone -q -b ruby_1_8 \
+            https://github.com/joiplay/ruby "$R18"
           git -C "$R18" checkout -q "$PIN_RUBY18"
 
           for name in config.guess config.sub; do
-            aux="$(find /usr/share -type f -name "$name" 2>/dev/null | head -1 || true)"
+            aux="$(find /usr/share -type f -name "$name" \
+              2>/dev/null | head -1 || true)"
+
             if [ -n "$aux" ]; then
               cp -f "$aux" "$R18/$name"
             fi
@@ -257,7 +306,7 @@ jobs:
           path = Path(sys.argv[1])
           source = path.read_text()
 
-          old = """#ifndef CharNext		/* defined as CharNext[AW] on Windows. */
+          old = """#ifndef CharNext\t\t/* defined as CharNext[AW] on Windows. */
           #define CharNext(p) ((p) + mblen(p, RUBY_MBCHAR_MAXSIZE))
           #endif"""
 
@@ -280,8 +329,10 @@ jobs:
               return (int)result;
           }
 
-          #define KERBERUS_MBLEN(s, n) kerberus_android_mblen((s), (n))
-          #define CharNext(p) ((p) + KERBERUS_MBLEN((p), RUBY_MBCHAR_MAXSIZE))
+          #define KERBERUS_MBLEN(s, n) \
+              kerberus_android_mblen((s), (n))
+          #define CharNext(p) \
+              ((p) + KERBERUS_MBLEN((p), RUBY_MBCHAR_MAXSIZE))
           #else
           #ifndef CharNext
           #define CharNext(p) ((p) + mblen(p, RUBY_MBCHAR_MAXSIZE))
@@ -295,13 +346,15 @@ jobs:
           PY
 
           cd "$R18"
-
           autoconf
 
           RES="$("$CC" -print-resource-dir)"
           SYSROOT="$TC/sysroot"
 
-          R18INC="-nostdinc \
+          # FIX: include the Ruby source root so missing/memcmp.c
+          # can resolve missing.h.
+          R18INC="-I$R18 \
+          -nostdinc \
           -isystem $RES/include \
           -isystem $SYSROOT/usr/include/aarch64-linux-android \
           -isystem $SYSROOT/usr/include"
@@ -328,7 +381,8 @@ jobs:
           BASERUBY="ruby --disable-gems" \
           CFLAGS="$R18CFLAGS" \
           CPPFLAGS="$R18INC" \
-          LDFLAGS="--sysroot=$SYSROOT -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
+          LDFLAGS="--sysroot=$SYSROOT \
+          -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
           ./configure \
             --host=aarch64-linux-android \
             --build=x86_64-pc-linux-gnu \
@@ -345,7 +399,6 @@ jobs:
 
           chmod +x "$R18/kerberus-host-ruby"
 
-          echo "Ruby do host:"
           "$R18/kerberus-host-ruby" -v
 
           "$R18/kerberus-host-ruby" -e '
@@ -353,11 +406,10 @@ jobs:
             puts "RubyGems desabilitado: OK"
           '
 
-          echo "Gerando fake helper do Ruby 1.8 para as etapas que precisam dele..."
-
           make -j1 fake
 
-          FAKE_RB="$(find "$R18" -maxdepth 1 -type f -name '*-fake.rb' -print -quit || true)"
+          FAKE_RB="$(find "$R18" -maxdepth 1 \
+            -type f -name '*-fake.rb' -print -quit || true)"
 
           if [ -z "$FAKE_RB" ]; then
             echo "ERRO: o target fake não gerou o helper *-fake.rb"
@@ -366,12 +418,8 @@ jobs:
             exit 1
           fi
 
-          echo "Fake helper gerado: $FAKE_RB"
-
           FAKE_MOD="$(basename "$FAKE_RB" .rb)"
 
-          # Validação apenas informativa. O helper não será usado como MINIRUBY,
-          # pois ele carrega o rbconfig.rb do Ruby 1.8 e quebra no Ruby 3 do host.
           set +e
           "$R18/kerberus-host-ruby" \
             -I"$R18" \
@@ -381,20 +429,10 @@ jobs:
           set -e
 
           if [ "$FAKE_RC" -ne 0 ]; then
-            echo "Aviso: fake helper não pôde ser carregado pelo Ruby moderno."
-            echo "Isso não impede a compilação, pois MINIRUBY usará somente o Ruby do host."
+            echo "Aviso: fake helper não pôde ser carregado."
           fi
 
-          # IMPORTANTE:
-          # Não usar:
-          #   MINIRUBY="$R18/kerberus-host-ruby -I$R18 -r$FAKE_MOD"
-          #
-          # O fake helper carrega o rbconfig.rb do Ruby 1.8 dentro do Ruby 3
-          # do runner e faz compile_prelude.rb falhar.
           HOST_RUBY="$R18/kerberus-host-ruby"
-
-          echo "Ruby usado nas ferramentas do host: $HOST_RUBY"
-          echo "MINIRUBY será executado sem o fake helper."
 
           : > "$GITHUB_WORKSPACE/ruby18.log"
 
@@ -410,7 +448,8 @@ jobs:
             MINIRUBY="$HOST_RUBY" \
             CFLAGS="$R18CFLAGS" \
             CPPFLAGS="$R18INC" \
-            LDFLAGS="--sysroot=$SYSROOT -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
+            LDFLAGS="--sysroot=$SYSROOT \
+            -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
             libruby-static.a \
             2>&1 | tee "$GITHUB_WORKSPACE/ruby18.log"
 
@@ -420,7 +459,6 @@ jobs:
 
           if [ "$MAKE_RC" -ne 0 ]; then
             echo "ERRO: compilação do Ruby 1.8 falhou com código $MAKE_RC"
-            echo "--- últimas 160 linhas de ruby18.log ---"
             tail -n 160 "$GITHUB_WORKSPACE/ruby18.log" || true
             exit "$MAKE_RC"
           fi
@@ -495,15 +533,22 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace \
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --console=plain \
+            --stacktrace \
             2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
 
       - name: Collect and audit APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -iname '*debug*.apk' | sort | head -1)"
+
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk" \
+            -type f -iname '*debug*.apk' | sort | head -1)"
+
           test -f "$APK"
+
           OUT="$GITHUB_WORKSPACE/Kerberus-XP-6.1.2-arm64-debug.apk"
           cp -f "$APK" "$OUT"
           sha256sum "$OUT" | tee "$OUT.sha256"
@@ -511,8 +556,15 @@ jobs:
           AUDIT="$GITHUB_WORKSPACE/_audit"
           rm -rf "$AUDIT"
           mkdir -p "$AUDIT"
+
           unzip -qq "$OUT" 'lib/arm64-v8a/*.so' -d "$AUDIT"
-          for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so; do
+
+          for lib in \
+            libmkxp-z18.so \
+            libmkxp-z31.so \
+            libruby.so \
+            libopenal.so; do
+
             test -s "$AUDIT/lib/arm64-v8a/$lib" || {
               echo "ERRO: $lib ausente na APK"
               exit 1
