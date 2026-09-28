@@ -224,21 +224,28 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}/app/jni
         run: |
           set -euo pipefail
+
           PIN_RUBY18="50783b870e31259ed5c91badbd5c8e41f8e56273"
           R18="$PWD/ruby18-src"
           OUT="$PWD/build-arm64-v8a/ruby18"
+
           TC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+
           CC="$TC/bin/aarch64-linux-android${ANDROID_API}-clang"
           AR="$TC/bin/llvm-ar"
           RANLIB="$TC/bin/llvm-ranlib"
           NM="$TC/bin/llvm-nm"
+
+          rm -rf "$R18"
 
           git clone -q -b ruby_1_8 https://github.com/joiplay/ruby "$R18"
           git -C "$R18" checkout -q "$PIN_RUBY18"
 
           for name in config.guess config.sub; do
             aux="$(find /usr/share -type f -name "$name" 2>/dev/null | head -1 || true)"
-            test -z "$aux" || cp -f "$aux" "$R18/$name"
+            if [ -n "$aux" ]; then
+              cp -f "$aux" "$R18/$name"
+            fi
           done
 
           sed -i 's/=>TRUE/=>true/g' "$R18/mkconfig.rb" || true
@@ -246,32 +253,81 @@ jobs:
           python3 - "$R18/ruby.c" <<'PY'
           from pathlib import Path
           import sys
-          p = Path(sys.argv[1])
-          s = p.read_text()
-          old = '''#ifndef CharNext\t\t/* defined as CharNext[AW] on Windows. */\n#define CharNext(p) ((p) + mblen(p, RUBY_MBCHAR_MAXSIZE))\n#endif'''
-          new = '''#if defined(__ANDROID__)\n#include <wchar.h>\nstatic int kerberus_android_mblen(const char *s, size_t n)\n{\n    mbstate_t state = {0};\n    size_t r = mbrlen(s, n, &state);\n    if (r == (size_t)-1 || r == (size_t)-2) return -1;\n    return (int)r;\n}\n#define KERBERUS_MBLEN(s,n) kerberus_android_mblen((s),(n))\n#else\n#define KERBERUS_MBLEN(s,n) mblen((s),(n))\n#endif\n\n#ifndef CharNext\t\t/* defined as CharNext[AW] on Windows. */\n#define CharNext(p) ((p) + KERBERUS_MBLEN(p, RUBY_MBCHAR_MAXSIZE))\n#endif'''
-          if old in s:
-              p.write_text(s.replace(old, new, 1))
-          elif "KERBERUS_MBLEN" not in s:
+
+          path = Path(sys.argv[1])
+          source = path.read_text()
+
+          old = """#ifndef CharNext		/* defined as CharNext[AW] on Windows. */
+          #define CharNext(p) ((p) + mblen(p, RUBY_MBCHAR_MAXSIZE))
+          #endif"""
+
+          new = """#if defined(__ANDROID__)
+          #include <wchar.h>
+
+          static int kerberus_android_mblen(const char *s, size_t n)
+          {
+              mbstate_t state = {0};
+              size_t result = mbrlen(s, n, &state);
+
+              if (result == (size_t)-1 || result == (size_t)-2) {
+                  return -1;
+              }
+
+              if (result == 0) {
+                  return 0;
+              }
+
+              return (int)result;
+          }
+
+          #define KERBERUS_MBLEN(s, n) kerberus_android_mblen((s), (n))
+          #define CharNext(p) ((p) + KERBERUS_MBLEN((p), RUBY_MBCHAR_MAXSIZE))
+          #else
+          #ifndef CharNext
+          #define CharNext(p) ((p) + mblen(p, RUBY_MBCHAR_MAXSIZE))
+          #endif
+          #endif"""
+
+          if old in source:
+              path.write_text(source.replace(old, new, 1))
+          elif "KERBERUS_MBLEN" not in source:
               raise SystemExit("CharNext macro not found in ruby.c")
           PY
 
           cd "$R18"
-          autoconf
-          RES="$($CC -print-resource-dir)"
-          SYSROOT="$TC/sysroot"
-          R18INC="-nostdinc -isystem $RES/include -isystem $SYSROOT/usr/include/aarch64-linux-android -isystem $SYSROOT/usr/include"
-          R18CFLAGS="-std=gnu89 -O2 -fno-stack-protector -fno-strict-aliasing -fwrapv -Wno-implicit-function-declaration -Wno-implicit-int -Wno-incompatible-pointer-types -Wno-int-conversion -Wno-incompatible-function-pointer-types --sysroot=$SYSROOT $R18INC"
 
-          # Ruby 1.8 cross-build uses the host Ruby to generate prelude.c.
-          # GitHub's Ruby 3 auto-loads RubyGems, which then sees the target
-          # Ruby 1.8 rbconfig.rb and aborts on the version mismatch. Keep
-          # RubyGems disabled only for these host-side generator invocations.
+          autoconf
+
+          RES="$("$CC" -print-resource-dir)"
+          SYSROOT="$TC/sysroot"
+
+          R18INC="-nostdinc \
+          -isystem $RES/include \
+          -isystem $SYSROOT/usr/include/aarch64-linux-android \
+          -isystem $SYSROOT/usr/include"
+
+          R18CFLAGS="-std=gnu89 \
+          -O2 \
+          -fno-stack-protector \
+          -fno-strict-aliasing \
+          -fwrapv \
+          -Wno-implicit-function-declaration \
+          -Wno-implicit-int \
+          -Wno-incompatible-pointer-types \
+          -Wno-int-conversion \
+          -Wno-deprecated-non-prototype \
+          -Wno-unused-value"
+
           export RUBYOPT="--disable-gems"
 
-          CC="$CC" AR="$AR" RANLIB="$RANLIB" NM="$NM" \
-          RUBY="ruby --disable-gems" BASERUBY="ruby --disable-gems" \
-          CFLAGS="$R18CFLAGS" CPPFLAGS="$R18INC" \
+          CC="$CC" \
+          AR="$AR" \
+          RANLIB="$RANLIB" \
+          NM="$NM" \
+          RUBY="ruby --disable-gems" \
+          BASERUBY="ruby --disable-gems" \
+          CFLAGS="$R18CFLAGS" \
+          CPPFLAGS="$R18INC" \
           LDFLAGS="--sysroot=$SYSROOT -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
           ./configure \
             --host=aarch64-linux-android \
@@ -282,94 +338,137 @@ jobs:
             ac_cv_header_pwd_h=no \
             ac_cv_header_langinfo_h=no
 
-          # Ruby 1.8 cross-build invokes a host Ruby through MINIRUBY.
-          # Do not trust the value baked into Makefile: force a wrapper on the
-          # make command line so RubyGems can never auto-load the target 1.8
-          # rbconfig.rb into the runner's Ruby 3.x process.
           cat > "$R18/kerberus-host-ruby" <<'EOF'
           #!/usr/bin/env bash
           exec ruby --disable-gems "$@"
           EOF
+
           chmod +x "$R18/kerberus-host-ruby"
-          # Ruby 1.8 does NOT create *-fake.rb during configure. Its own
-          # Makefile provides the official `fake` target, which materializes
-          # $(arch)-fake.rb from template/fake.rb.in through config.status.
-          echo "Generating Ruby 1.8 cross-build fake helper..."
+
+          echo "Ruby do host:"
+          "$R18/kerberus-host-ruby" -v
+
+          "$R18/kerberus-host-ruby" -e '
+            abort "RubyGems foi carregado inesperadamente" if defined?(Gem)
+            puts "RubyGems desabilitado: OK"
+          '
+
+          echo "Gerando fake helper do Ruby 1.8 para as etapas que precisam dele..."
+
           make -j1 fake
 
-          FAKE_RB="$(find "$R18" -maxdepth 1 -type f -name '*-fake.rb' -print -quit)"
+          FAKE_RB="$(find "$R18" -maxdepth 1 -type f -name '*-fake.rb' -print -quit || true)"
+
           if [ -z "$FAKE_RB" ]; then
-            echo "ERRO: Ruby 1.8 'make fake' did not generate a *-fake.rb helper."
-            echo "Arquivos fake encontrados:"
-            find "$R18" -maxdepth 2 -name '*fake*' -print || true
-            echo "Makefile fake rules:"
-            grep -n -A4 -B2 '^fake:' Makefile || true
+            echo "ERRO: o target fake não gerou o helper *-fake.rb"
+            find "$R18" -maxdepth 2 -type f -iname '*fake*' -print || true
+            grep -n -A8 -B3 '^fake:' Makefile || true
             exit 1
           fi
 
-          # The fake helper intentionally rewrites RUBY_VERSION/RUBY_PLATFORM to
-          # the target Ruby 1.8 values. On modern host Ruby this breaks host stdlib
-          # loading (fileutils -> rbconfig) unless those host libraries are loaded
-          # before the constants are spoofed. Preload them at the very top of the
-          # generated helper, while RUBY_VERSION still matches the host executable.
-          python3 - "$FAKE_RB" <<'PY'
-          from pathlib import Path
-          import sys
-          p = Path(sys.argv[1])
-          s = p.read_text()
-          marker = '# KERBERUS_HOST_STDLIB_PRELOAD'
-          if marker not in s:
-              p.write_text(
-                  marker + "\n"
-                  + "require 'rbconfig'\n"
-                  + "require 'fileutils'\n"
-                  + s
-              )
-          PY
+          echo "Fake helper gerado: $FAKE_RB"
 
           FAKE_MOD="$(basename "$FAKE_RB" .rb)"
-          HOST_MINIRUBY="$R18/kerberus-host-ruby -I$R18 -r$FAKE_MOD"
 
-          echo "Ruby 1.8 fake helper: $FAKE_RB"
-          echo "Kerberus host MINIRUBY: $HOST_MINIRUBY"
-          "$R18/kerberus-host-ruby" -v
-          "$R18/kerberus-host-ruby" -e 'abort "RubyGems unexpectedly loaded" if defined?(Gem); puts "RubyGems disabled: OK"'
-          "$R18/kerberus-host-ruby" -I"$R18" -r"$FAKE_MOD" -e 'abort "target version spoof failed" unless RUBY_VERSION == "1.8.8"; abort "FileUtils preload missing" unless defined?(FileUtils); puts "Ruby 1.8 fake helper + host stdlib preload: OK"'
+          # Validação apenas informativa. O helper não será usado como MINIRUBY,
+          # pois ele carrega o rbconfig.rb do Ruby 1.8 e quebra no Ruby 3 do host.
+          set +e
+          "$R18/kerberus-host-ruby" \
+            -I"$R18" \
+            -r"$FAKE_MOD" \
+            -e 'puts "Fake helper carregado: RUBY_VERSION=#{RUBY_VERSION}"'
+          FAKE_RC=$?
+          set -e
+
+          if [ "$FAKE_RC" -ne 0 ]; then
+            echo "Aviso: fake helper não pôde ser carregado pelo Ruby moderno."
+            echo "Isso não impede a compilação, pois MINIRUBY usará somente o Ruby do host."
+          fi
+
+          # IMPORTANTE:
+          # Não usar:
+          #   MINIRUBY="$R18/kerberus-host-ruby -I$R18 -r$FAKE_MOD"
+          #
+          # O fake helper carrega o rbconfig.rb do Ruby 1.8 dentro do Ruby 3
+          # do runner e faz compile_prelude.rb falhar.
+          HOST_RUBY="$R18/kerberus-host-ruby"
+
+          echo "Ruby usado nas ferramentas do host: $HOST_RUBY"
+          echo "MINIRUBY será executado sem o fake helper."
+
+          : > "$GITHUB_WORKSPACE/ruby18.log"
 
           set +e
-          make -j"$(nproc)" \
+
+          make -j1 \
             CC="$CC" \
-            RUBY="$R18/kerberus-host-ruby" \
-            BASERUBY="$R18/kerberus-host-ruby" \
-            MINIRUBY="$HOST_MINIRUBY" \
-            libruby-static.a 2>&1 | tee "$GITHUB_WORKSPACE/ruby18.log"
+            AR="$AR" \
+            RANLIB="$RANLIB" \
+            NM="$NM" \
+            RUBY="$HOST_RUBY" \
+            BASERUBY="$HOST_RUBY" \
+            MINIRUBY="$HOST_RUBY" \
+            CFLAGS="$R18CFLAGS" \
+            CPPFLAGS="$R18INC" \
+            LDFLAGS="--sysroot=$SYSROOT -Wl,-z,max-page-size=16384 -ldl -lm -lz" \
+            libruby-static.a \
+            2>&1 | tee "$GITHUB_WORKSPACE/ruby18.log"
+
           MAKE_RC=${PIPESTATUS[0]}
+
           set -e
+
           if [ "$MAKE_RC" -ne 0 ]; then
-            echo "ERRO: Ruby 1.8 make falhou com codigo $MAKE_RC"
-            echo "--- ultimas 120 linhas de ruby18.log ---"
-            tail -n 120 "$GITHUB_WORKSPACE/ruby18.log" || true
+            echo "ERRO: compilação do Ruby 1.8 falhou com código $MAKE_RC"
+            echo "--- últimas 160 linhas de ruby18.log ---"
+            tail -n 160 "$GITHUB_WORKSPACE/ruby18.log" || true
             exit "$MAKE_RC"
           fi
-          test -s libruby-static.a || { echo "ERRO: libruby-static.a nao foi gerado"; exit 1; }
+
+          test -s libruby-static.a || {
+            echo "ERRO: libruby-static.a não foi gerado"
+            exit 1
+          }
 
           rm -rf "$OUT"
           mkdir -p "$OUT/lib" "$OUT/include" "$OUT/obj"
-          cp -f libruby-static.a "$OUT/lib/libruby18-static.a"
-          find . -maxdepth 1 -type f -name '*.h' -exec cp -f {} "$OUT/include/" \;
 
-          for spec in 'zlib:zlib.c' 'stringio:stringio.c' 'strscan:strscan.c'; do
+          cp -f libruby-static.a "$OUT/lib/libruby18-static.a"
+
+          find . \
+            -maxdepth 1 \
+            -type f \
+            -name '*.h' \
+            -exec cp -f {} "$OUT/include/" \;
+
+          for spec in \
+            "zlib:zlib.c" \
+            "stringio:stringio.c" \
+            "strscan:strscan.c"; do
+
             dir="${spec%%:*}"
             file="${spec#*:}"
-            "$CC" $R18CFLAGS -I"$R18" -I"$OUT/include" -DOS_CODE=OS_UNIX \
-              -c "$R18/ext/$dir/$file" -o "$OUT/obj/$dir.o"
+
+            "$CC" \
+              $R18CFLAGS \
+              -I"$R18" \
+              -I"$OUT/include" \
+              -DOS_CODE=OS_UNIX \
+              -c "$R18/ext/$dir/$file" \
+              -o "$OUT/obj/$dir.o"
           done
 
-          "$AR" rcs "$OUT/lib/libruby18-ext.a" "$OUT/obj/"*.o
+          "$AR" rcs \
+            "$OUT/lib/libruby18-ext.a" \
+            "$OUT/obj/"*.o
+
           "$RANLIB" "$OUT/lib/libruby18-static.a"
           "$RANLIB" "$OUT/lib/libruby18-ext.a"
+
           "$NM" "$OUT/lib/libruby18-static.a" | grep -q ' ruby_init$'
           "$NM" "$OUT/lib/libruby18-ext.a" | grep -q ' Init_zlib$'
+
+          echo "Ruby 1.8 compilado com sucesso."
 
       - name: Generate mkxp-z embedded assets
         shell: bash
