@@ -118,6 +118,33 @@ com o override `.kerberus-runtime`.
 
 ## 7. Verificação desta entrega
 
+### 6.3.1 (correção dos controles)
+
+Workflow v20, execução 36600226232 (commit `623c862`):
+https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36600226232
+
+| Item | Situação |
+|---|---|
+| Testes de host: Java (inclui o `ControlsHostTest` ampliado pelo dono do repositório), Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
+| `test_input_live.rb` | 13 falhas na 6.3, passa na 6.3.1 |
+| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.3 |
+| Java do app inteiro contra `android.jar` API 33 | Compila |
+| Build da APK ARM64 (NDK r23 + Gradle `assembleDebug`) | **Passou**, incluindo a ligação dos acessores ao vivo com a tabela VK do mkxp-z |
+| Auditoria da APK | **Passou** (`KERBERUS_APK_AUDIT_OK`), com a mesma separação de runtimes da 6.3 |
+| Teste no aparelho | Pendente: reabrir o Uranium com a 6.3.1 |
+
+APK gerada: artefato `Kerberus-XP-6.3-arm64-debug` da execução acima (retenção de 30 dias). O nome do
+artefato continua o do workflow v20; a versão dentro do app é `6.3.1-pokemon-compatibility`.
+
+```
+sha256  44d9d0f02ca83e56ef3da2f875e06ff00237892e2d6be69241b1eb83aadb5016  Kerberus-XP-6.3-arm64-debug.apk
+```
+
+A APK é assinada com uma chave de debug nova a cada build. Para instalar por cima da 6.3 é preciso
+desinstalar a 6.3 antes, e isso apaga os jogos importados e os saves guardados dentro do app.
+
+### 6.3
+
 Workflow v20 no GitHub Actions, execução 36571734953 (commit `f1e1335`):
 https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36571734953
 
