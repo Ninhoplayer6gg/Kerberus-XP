@@ -321,6 +321,27 @@ jobs:
           echo "Ruby 1.8 core/ext symbols: OK"
           echo KERBERUS_PREBUILT_CHECKPOINT_OK
 
+      # Ruby 1.8 (legacy18) is compiled here from the pinned joiplay/ruby
+      # ruby_1_8 source, with the Termux builder's patches and flags. The
+      # checkpoint's prebuilt copy is the reference: config.h, headers and
+      # archive members must match it exactly, then the fresh build replaces
+      # it for the APK.
+      - name: Build Ruby 1.8 (legacy18) from pinned source
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          REF="$RUNNER_TEMP/ruby18-prebuilt-reference"
+          rm -rf "$REF"
+          cp -a app/jni/build-arm64-v8a/ruby18 "$REF"
+          R18_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64" \
+          R18_SRC="$RUNNER_TEMP/ruby18-src" \
+          R18_OUT="$PWD/app/jni/build-arm64-v8a/ruby18" \
+          R18_REFERENCE="$REF" \
+          HOST_RUBY=ruby \
+            bash scripts/build-ruby18-android.sh 2>&1 | tee "$GITHUB_WORKSPACE/ruby18-build.log"
+          grep -q KERBERUS_RUBY18_BUILD_OK "$GITHUB_WORKSPACE/ruby18-build.log"
+
       - name: Download JNI source dependencies
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}/app/jni
@@ -678,6 +699,7 @@ jobs:
           path: |
             source-preflight.log
             get-deps.log
+            ruby18-build.log
             ruby31-build.log
             xxd.log
             http18-patch.log
