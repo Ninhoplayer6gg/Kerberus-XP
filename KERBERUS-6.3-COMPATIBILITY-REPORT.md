@@ -105,3 +105,17 @@ com o override `.kerberus-runtime`.
    batalha → áudio → save → load → troca de mapas; os marcos aparecem sozinhos no diagnóstico.
 5. A cada falha: enviar o bloco `[WINBRIDGE]` ou `[RUBY_EXCEPTION]`. Ele já traz dll, função,
    assinatura, script e linha para decidir entre provider genérico, port ou perfil.
+
+## 7. Verificação desta entrega
+
+| Item | Situação |
+|---|---|
+| Testes de host (Java, Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram, também a partir de uma extração limpa do ZIP |
+| Java do app inteiro contra `android.jar` API 33 | Compila |
+| Build da APK ARM64 (NDK r23 + Gradle) | **Não executada nesta sessão.** O push para o GitHub foi recusado (HTTP 403: o app do Claude não tem acesso de escrita ao repositório), então o workflow v20 não rodou. O ambiente de trabalho também não tinha acesso ao Android SDK/NDK |
+| Teste dos jogos em aparelho | Não executado (sem jogos e sem aparelho) |
+
+Para compilar: envie `Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip` para a raiz do repositório e
+`Kerberus-XP-6.3-GitHub-Build-v20-Pokemon-Compatibility.yml` para `.github/workflows/`, depois rode o
+workflow manualmente (Actions → "Kerberus XP 6.3 - Build APK (v20 pokemon compatibility)" → Run workflow).
+O job `tests` roda antes; o job `build` só compila a APK se todos os testes passarem.
