@@ -127,6 +127,23 @@ com o override `.kerberus-runtime`.
 
 ## 7. Verificação desta entrega
 
+### 6.3.2 (regra de superclasse do RGSS1 e relatório de erro)
+
+Workflow v20, execução 36602792658 (commit `968ca31`):
+https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36602792658
+
+| Item | Situação |
+|---|---|
+| Testes de host (Java, Ruby 1.8.7 real com 13 arquivos e 472 verificações, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
+| `test_ruby181_classes.rb` | Reproduz o erro do aparelho na 6.3.1 e passa na 6.3.2 |
+| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.3.1 |
+| Build da APK ARM64 e auditoria | **Passaram** (`KERBERUS_APK_AUDIT_OK`) |
+| Teste no aparelho | Pendente: reabrir o Uranium com a 6.3.2 |
+
+```
+sha256  b6a6741c0347e15df1f26d2181729f82da7bf6e80acf119404dff07b5e7dc5f7  Kerberus-XP-6.3-arm64-debug.apk
+```
+
 ### 6.3.1 (correção dos controles)
 
 Workflow v20, execução 36600226232 (commit `623c862`):
