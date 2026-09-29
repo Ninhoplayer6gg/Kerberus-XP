@@ -15,6 +15,11 @@
 >
 > **6.3.3.** O Ruby 1.8 passa a ser compilado no CI a partir do código fixado, e a regra de
 > superclasse do Ruby 1.8.1 vai para dentro do interpretador (`eval.c`).
+>
+> **6.4.0.** Atualização grande de compatibilidade e desempenho: 99 funções Win32 comuns que paravam o
+> jogo passam a funcionar (entre elas `SetPriorityClass`, presente no Uranium), pulo de quadros do
+> RGSS1, coleta de lixo e cache de métodos do Ruby 1.8 ajustados com medição, e relatório `[PERF]`
+> de desempenho no log. Nenhum jogo foi testado no aparelho com a 6.4.0.
 
 ## 1. Estado por jogo
 
@@ -49,6 +54,10 @@ com o override `.kerberus-runtime`.
 | 14 | (achados pelos testes da própria 6.3, corrigidos antes da entrega) | Filesystem/IO/áudio | Ruby 1.8 recusa reexecutar `File#initialize` ("reinitializing File"); cache relativo inválido após `chdir`; `flush` em arquivo só leitura; `type mpegvideo` do MCI é usado para MP3/OGG | Resolução antes da abertura; cache limpo no `chdir`; handles sabem se são graváveis; vídeo MCI decidido pela extensão | suítes legacy18 |
 | 15 | Uranium abre, mas nenhum controle responde: gamepad de tela, teclado ou controle físico | Input | `GetAsyncKeyState`, `GetKeyState` e `GetKeyboardState` liam `Input.pressex?`, que consulta uma cópia do estado que só o `Input.update` nativo do mkxp-z atualiza. O Essentials v15–v17 substitui `Input.update` pela própria leitura via `GetAsyncKeyState` e nunca chama o nativo, então a cópia ficava vazia. `GetCursorPos` e XInput tinham a mesma dependência. Os testes da 6.3 não pegaram isso porque o dublê do mkxp-z respondia ao vivo | O legacy18 lê o estado ao vivo da thread de eventos SDL (`KerberusNative.key_down?`, `mouse_position`, `pad_buttons`, `pad_axis`), como o Windows lê o teclado real. O controle físico aciona as mesmas teclas do gamepad de tela. O dublê do mkxp-z agora separa estado vivo e cópia, como o original. O modern31 não muda | `test_input_live.rb` (13 falhas na 6.3, passa na 6.3.1) |
 | 16 | Uranium para ao carregar a section 199: `superclass mismatch for class Window_PokemonBag` | Ruby 1.8 | O RPG Maker XP usa o Ruby 1.8.1, que ao reabrir uma classe com outra superclasse cria uma classe nova com o mesmo nome (`eval.c`, `goto override_class`). O Ruby 1.8.2 em diante, incluindo o 1.8.7 do Kerberus, lança `TypeError` | Antes de cada `class Nome < Constante` dos scripts, na mesma linha, o legacy18 remove `Nome` quando a superclasse atual difere; o Ruby 1.8.7 então define a classe nova como o 1.8.1. Cada caso vira `[RUBY181_CLASS_OVERRIDE]` com section e linha. Nenhum arquivo do jogo muda. Na 6.3.3 a regra foi para o `NODE_CLASS` do `eval.c` do Ruby 1.8 compilado no CI; o texto dos scripts fica intacto e a versão por texto ficou como fallback | `test_ruby181_classes.rb` (interpretador) e `test_ruby181_transform.rb` (fallback) |
+| 18 | Qualquer chamada a `SetPriorityClass` (detectada no Uranium) ou a outras 98 funções Win32 comuns em scripts de RMXP parava o jogo com `WINBRIDGE_UNAVAILABLE` | Win32API | Sem provider: de uma lista de 256 funções comuns, 99 não existiam no WinBridge | `54_extended.rb` implementa as 99 com o comportamento real ou com a falha documentada do Windows; a conferência contra a lista dá zero faltando | `test_extended_apis.rb` (90 verificações) |
+| 19 | O diagnóstico listava `xinput1_3`, `xinput9_1_0` e `RGSS Linker` como não classificadas | Diagnóstico | A análise estática procurava o nome da DLL como escrito pelo jogo | Mesmos aliases de DLL e mesmo sufixo `A` do WinBridge; um teste compara as listas de aliases do Java e do Ruby | `CompatibilityStatusHostTest` |
+| 20 | Em aparelho lento o jogo roda em câmera lenta em vez de pular quadros | Desempenho | O RGSS1 pula quadros quando atrasa; o mkxp-z vem com isso desligado | O legacy18 liga `Graphics.frameskip` (desligável por jogo) | `test_performance.rb` |
+| 21 | Coletas de lixo frequentes (a cada 8 MB alocados) em jogos grandes | Desempenho | Limites do Ruby 1.8 pensados para PCs de 2003 | Limite de 16 MB (medido: 43% menos coletas e 37% menos tempo de GC na carga leve), cache de métodos 8x maior, ajuste por jogo | benchmark no documento técnico |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
 ## 3. Implementado
@@ -71,11 +80,15 @@ com o override `.kerberus-runtime`.
   C++ nos dois runtimes, teste nativo) antes do build da APK; auditoria de separação dos motores;
   script Termux atualizado.
 
+- **6.4**: 99 funções Win32 novas, análise estática com aliases, pulo de quadros do RGSS1, patch de
+  desempenho do Ruby 1.8 (GC e cache de métodos), relatório `[PERF]` com coletas de lixo, opções
+  `frameskip` e `gc_malloc_limit`.
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real com o patch RGSS1 (14 arquivos) | 495 | OK |
+| Legacy18 em Ruby 1.8.7 real com os patches RGSS1 e de desempenho (16 arquivos) | 594 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
 | Regressão modern31/Infinite Fusion em Ruby 3.1.6 | 7 + sha256 | OK |
 | Java: seleção de runtime | 14 casos | OK |
@@ -96,6 +109,11 @@ com o override `.kerberus-runtime`.
 - **Toques mais curtos que um quadro** (cerca de 16 ms) podem se perder: o estado é lido quando o
   jogo consulta, e o Windows guardaria esse toque no bit 0 do `GetAsyncKeyState`.
 - **Roda do mouse** (`InputGetWheelDelta`) ainda depende do `Input.update` nativo.
+- **Coleta de lixo**: o limite de 16 MB faz menos coletas, mas cada uma pode demorar um pouco mais
+  (no host, pior pausa de 13,5 para 17,2 ms). O relatório `[PERF]` mostra o efeito real no aparelho.
+- **MIDI**: a APK não traz o fluidsynth; músicas `.mid` ficam em silêncio, sem travar o jogo.
+- **RTP**: jogos clássicos de RMXP que dependem do RTP instalado no Windows não encontram esses
+  arquivos; a maioria dos fangames de Pokémon traz tudo na própria pasta.
 - **Assinatura da APK**: cada build do CI usa uma chave de debug nova. Instalar uma build nova por
   cima da anterior exige desinstalar, o que apaga os jogos importados e os saves guardados no app.
 - **HMode7** (mapas 3D do Insurgence): renderizador x86 sem port; a chamada gera erro preciso.
@@ -117,7 +135,7 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Instalar a APK da 6.3.3 e abrir o jogo.
+1. Instalar a APK da 6.4.0 e abrir o jogo.
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.
@@ -129,6 +147,12 @@ com o override `.kerberus-runtime`.
    assinatura, script e linha para decidir entre provider genérico, port ou perfil.
 
 ## 7. Verificação desta entrega
+
+### 6.3.3 (Ruby 1.8 compilado no CI com a regra do 1.8.1 no `eval.c`)
+
+Workflow v20, execução 36607644952 (commit `438d323`), verde: testes de host, APK e auditoria, que
+confere o patch do Ruby 1.8 dentro do `libmkxp-z18.so`.
+https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36607644952
 
 ### 6.3.2 (regra de superclasse do RGSS1 e relatório de erro)
 
