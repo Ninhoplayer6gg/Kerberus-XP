@@ -23,7 +23,7 @@
 >
 > **6.4.1.** Com a 6.4.0 o Uranium passou da section 199 (classes) e já tinha controles, pulo de
 > quadros e as APIs Win32 resolvidas, mas parou na section 253 (GENERATE WIKI PAGES) com
-> `undefined (?...) sequence: /(?<!\\)"/`. Causa e correção: bugs 22 a 24. Nenhum jogo foi testado
+> `undefined (?...) sequence: /(?<!\\)"/`. Causa e correção: bugs 22 a 25. Nenhum jogo foi testado
 > no aparelho com a 6.4.1.
 
 ## 1. Estado por jogo
@@ -66,6 +66,7 @@ com o override `.kerberus-runtime`.
 | 22 | Uranium para ao carregar a section 253 (GENERATE WIKI PAGES): `undefined (?...) sequence: /(?<!\\)"/` | Ruby 1.8 | O RPG Maker XP compila regex com o Oniguruma, que aceita look-behind e grupos nomeados; o motor GNU do Ruby 1.8.7 recusa essa sintaxe ao ler o script, e um único literal derruba a section inteira, mesmo sem ser usado | O Ruby 1.8 do CI (`scripts/patch-ruby18-oniguruma.py`) mantém o GNU para toda regex que ele aceita e passa só as recusadas ao Oniguruma 6.9.10 (BSD 2-Clause, commit fixado), com sintaxe Ruby e o `$KCODE` em uso; se os dois recusam, o erro do GNU continua. Nenhum script do jogo muda | `test_regex_rgss1.rb` (48 verificações, com a regex exata do Uranium; falha no Ruby sem o patch com o mesmo erro do aparelho) |
 | 23 | O relatório desse erro dizia `line=369`, mas a regex estava na linha 270 | Diagnóstico | O Ruby 1.8 lança o `SyntaxError` na última linha da section; a linha do erro fica na mensagem | No legacy18 o relatório usa a linha `SectionNNN:linha:` da mensagem (`kerberus/exception-line.h`) | `exception_line_test.cpp` (8 verificações) |
 | 24 | `GetDiskFreeSpaceExA` falhava com `ERROR_NOT_SUPPORTED` no aparelho, apesar de a 6.4.0 anunciar espaço real | Win32API | O provider chamava `KerberusNative.disk_space`, que só existia no dublê dos testes | `disk_space` nativo com `statvfs` no legacy18 | checagem C++ e conferência com `df` no host |
+| 25 | O diagnóstico mostrava `IMPORTAÇÃO INTERROMPIDA ... 3911/6540` e a pasta parcial ocupava espaço para sempre | Launcher | Com o processo morto no meio da importação, o `finally` que apaga a pasta de preparação (`games/.import-*`) e as cópias do ZIP no cache nunca roda. O jogo já importado não é afetado: a importação só troca a pasta no final | O launcher apaga essas sobras ao abrir, no mesmo worker das importações, antes de qualquer importação nova; jogos importados e outros arquivos ficam intactos | `ImportLeftoversHostTest` |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
 ## 3. Implementado
@@ -92,8 +93,8 @@ com o override `.kerberus-runtime`.
   desempenho do Ruby 1.8 (GC e cache de métodos), relatório `[PERF]` com coletas de lixo, opções
   `frameskip` e `gc_malloc_limit`.
 - **6.4.1**: Oniguruma no Ruby 1.8 para a sintaxe de regex do RGSS1 (look-behind, grupos nomeados)
-  que o GNU recusa; linha certa no relatório de `SyntaxError`; `disk_space` nativo. Licença em
-  `THIRD-PARTY-NOTICES.md` e no APK.
+  que o GNU recusa; linha certa no relatório de `SyntaxError`; `disk_space` nativo; limpeza das
+  sobras de importação interrompida. Licença em `THIRD-PARTY-NOTICES.md` e no APK.
 
 ## 4. Testes adicionados
 
@@ -106,6 +107,7 @@ com o override `.kerberus-runtime`.
 | Java: seleção de runtime | 14 casos | OK |
 | Java: estado de compatibilidade e opções | 14 | OK |
 | Java: SessionLock e controles (existentes) | – | OK |
+| Java: sobras de importação interrompida | 8 | OK |
 | C++: 6 arquivos × 2 runtimes (clang, C++14) | 12 | OK |
 | Java do app inteiro contra `android.jar` API 33, alvo Java 8 | 146 classes | OK |
 | Sincronia de gerados (header, catálogo, lista de APIs) | 3 | OK |
@@ -169,12 +171,19 @@ com o override `.kerberus-runtime`.
 
 | Item | Situação |
 |---|---|
-| Testes de host (Java, Ruby 1.8.7 real com os três patches: 17 arquivos e 642 verificações; Ruby 3.1; C++ nos dois runtimes; ciclo de vida nativo; linha do `SyntaxError`) | Passaram localmente |
+| Testes de host (Java, Ruby 1.8.7 real com os três patches: 17 arquivos e 642 verificações; Ruby 3.1; C++ nos dois runtimes; ciclo de vida nativo; linha do `SyntaxError`) | Passaram localmente e no job `tests` do CI |
 | `test_regex_rgss1.rb` | No Ruby sem o patch falha com o mesmo erro do aparelho (`Section253:3: undefined (?...) sequence: /(?<!\\)"/`); com o patch, 48 verificações passam |
 | `scripts/build-ruby18-android.sh` em modo cruzado (gcc aarch64 do host) | Passou: núcleo com 60 objetos (41 + 19 do Oniguruma); `regex.h` = referência + o campo; membros = referência + Oniguruma; programa de teste liga sem símbolos faltando. Todos os objetos também compilam com clang para aarch64 |
 | Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.4.0 |
-| Build da APK no CI e auditoria | Aguardando a execução deste commit |
+| Build da APK no CI e auditoria (execução 36638774215, commit `8daa942`) | **Passaram**: Ruby 1.8 com Oniguruma compilado pelo NDK e conferido contra a referência; `KERBERUS_APK_AUDIT_OK` com o Oniguruma só no `libmkxp-z18.so` e a licença em `assets/licenses` |
+| Limpeza das sobras de importação interrompida (commit seguinte) | `ImportLeftoversHostTest` passou localmente; APK na próxima execução do CI |
 | Teste no aparelho | Pendente: reabrir o Uranium com a 6.4.1 |
+
+https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36638774215
+
+```
+sha256  ec27190692ea507aab3f1ea53ff4f4cc1fca1ddf1815f0be5db5091a3c4ec60b  Kerberus-XP-6.3-arm64-debug.apk (8daa942)
+```
 
 ### 6.4.0 (compatibilidade e desempenho)
 
