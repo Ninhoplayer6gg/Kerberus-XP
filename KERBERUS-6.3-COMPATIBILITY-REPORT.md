@@ -108,14 +108,30 @@ com o override `.kerberus-runtime`.
 
 ## 7. Verificação desta entrega
 
+Workflow v20 no GitHub Actions, execução 36571734953 (commit `f1e1335`):
+https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36571734953
+
 | Item | Situação |
 |---|---|
-| Testes de host (Java, Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram, também a partir de uma extração limpa do ZIP |
+| Testes de host (Java, Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
 | Java do app inteiro contra `android.jar` API 33 | Compila |
-| Build da APK ARM64 (NDK r23 + Gradle) | **Não executada nesta sessão.** O push para o GitHub foi recusado (HTTP 403: o app do Claude não tem acesso de escrita ao repositório), então o workflow v20 não rodou. O ambiente de trabalho também não tinha acesso ao Android SDK/NDK |
-| Teste dos jogos em aparelho | Não executado (sem jogos e sem aparelho) |
+| Build da APK ARM64 (NDK r23 + Gradle `assembleDebug`) | **Passou** no job `build` (`BUILD SUCCESSFUL`) |
+| Auditoria da APK | **Passou** (`KERBERUS_APK_AUDIT_OK`): só ABI arm64-v8a; libmkxp-z18 sem `libruby.so`; libmkxp-z31 com `libruby.so`; sem caminhos absolutos do host; libmkxp-z18 contém só o bootstrap Legacy18 (WinBridge) e libmkxp-z31 só o bootstrap moderno (Infinite Fusion) |
+| Teste dos jogos em aparelho | Não executado (sem jogos e sem aparelho). Nenhum jogo passa de "Não testado" |
 
-Para compilar: envie `Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip` para a raiz do repositório e
-`Kerberus-XP-6.3-GitHub-Build-v20-Pokemon-Compatibility.yml` para `.github/workflows/`, depois rode o
-workflow manualmente (Actions → "Kerberus XP 6.3 - Build APK (v20 pokemon compatibility)" → Run workflow).
-O job `tests` roda antes; o job `build` só compila a APK se todos os testes passarem.
+APK gerada: artefato `Kerberus-XP-6.3-arm64-debug` da execução acima (retenção de 30 dias). O artefato
+contém a APK, o arquivo `.sha256` e o `apk-audit.log`.
+
+```
+sha256  93469ddc40cb4997ddf7d7d1130a45ff3ee3ba5851e81438d8ee521ea55f127d  Kerberus-XP-6.3-arm64-debug.apk
+```
+
+Observação da auditoria: `libc++_shared.so` e `libopenal.so` têm alinhamento de segmento LOAD de 4 KB; as
+demais bibliotecas têm 16 KB. Isso não afeta aparelhos com páginas de 4 KB, mas aparelhos com páginas de
+16 KB exigirão essas duas bibliotecas recompiladas com alinhamento de 16 KB. Esse ponto não foi alterado
+nesta versão.
+
+Para recompilar: Actions → "Kerberus XP 6.3 - Build APK (v20 pokemon compatibility)" → Run workflow. O
+workflow também roda sozinho em push que altere o ZIP ou o próprio workflow nesta branch. O job `tests`
+roda antes; o job `build` só compila a APK se todos os testes passarem. O workflow usa apenas actions
+criadas pelo GitHub (`actions/*`), porque a política do repositório bloqueia actions de terceiros.
