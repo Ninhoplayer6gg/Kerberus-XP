@@ -12,12 +12,15 @@
 >
 > **6.3.2.** Com a 6.3.1, o Uranium carregou todas as sections até a 199 e parou em
 > `superclass mismatch for class Window_PokemonBag`. Causa e correção: bugs 16 e 17.
+>
+> **6.3.3.** O Ruby 1.8 passa a ser compilado no CI a partir do código fixado, e a regra de
+> superclasse do Ruby 1.8.1 vai para dentro do interpretador (`eval.c`).
 
 ## 1. Estado por jogo
 
 | Jogo | Runtime | Última evidência real | Estado 6.3 | O que a 6.3 muda para ele |
 |---|---|---|---|---|
-| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | 6.3.1: carrega as sections até a 199 e para em `superclass mismatch for class Window_PokemonBag` (relato do usuário) | Controles corrigidos na 6.3.1 e regra de superclasse do RGSS1 na 6.3.2; aguarda novo teste | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
+| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | 6.3.1: carrega as sections até a 199 e para em `superclass mismatch for class Window_PokemonBag` (relato do usuário) | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 na 6.3.2, no interpretador desde a 6.3.3; aguarda novo teste | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
 | Pokémon Insurgence | legacy18 | Nenhuma | Não testado | HMode7 e Winsock declarados no carregamento não bloqueiam mais; rede responde com erros Winsock documentados; `GetKeyboardState` do módulo `Keys` 9× mais rápido |
 | Pokémon Xenoverse | legacy18 | Nenhuma | Não testado | Port do Zeus Video Player (OGV nativo), KleinBitmap, MCI mapeado para o áudio nativo |
 | Pokémon Infinite Fusion | modern31 (Ruby 3.1) | Entrava no jogo (6.1.x) | Regressão automatizada OK; aparelho pendente | Nada no comportamento do jogo. Bootstrap moderno byte a byte idêntico (sha256 fixado). No C++ do modern31 entraram só dois registros de diagnóstico (marco BOOT e relatório de exceção). Três proteções independentes na seleção de runtime |
@@ -45,7 +48,7 @@ com o override `.kerberus-runtime`.
 | 13 | Os dois textos Ruby eram embutidos nos dois motores | Separação de runtimes | Os dois headers eram incluídos em `binding-mri.cpp` para ambos | Cada motor inclui só o seu; auditoria da APK verifica | workflow v20 |
 | 14 | (achados pelos testes da própria 6.3, corrigidos antes da entrega) | Filesystem/IO/áudio | Ruby 1.8 recusa reexecutar `File#initialize` ("reinitializing File"); cache relativo inválido após `chdir`; `flush` em arquivo só leitura; `type mpegvideo` do MCI é usado para MP3/OGG | Resolução antes da abertura; cache limpo no `chdir`; handles sabem se são graváveis; vídeo MCI decidido pela extensão | suítes legacy18 |
 | 15 | Uranium abre, mas nenhum controle responde: gamepad de tela, teclado ou controle físico | Input | `GetAsyncKeyState`, `GetKeyState` e `GetKeyboardState` liam `Input.pressex?`, que consulta uma cópia do estado que só o `Input.update` nativo do mkxp-z atualiza. O Essentials v15–v17 substitui `Input.update` pela própria leitura via `GetAsyncKeyState` e nunca chama o nativo, então a cópia ficava vazia. `GetCursorPos` e XInput tinham a mesma dependência. Os testes da 6.3 não pegaram isso porque o dublê do mkxp-z respondia ao vivo | O legacy18 lê o estado ao vivo da thread de eventos SDL (`KerberusNative.key_down?`, `mouse_position`, `pad_buttons`, `pad_axis`), como o Windows lê o teclado real. O controle físico aciona as mesmas teclas do gamepad de tela. O dublê do mkxp-z agora separa estado vivo e cópia, como o original. O modern31 não muda | `test_input_live.rb` (13 falhas na 6.3, passa na 6.3.1) |
-| 16 | Uranium para ao carregar a section 199: `superclass mismatch for class Window_PokemonBag` | Ruby 1.8 | O RPG Maker XP usa o Ruby 1.8.1, que ao reabrir uma classe com outra superclasse cria uma classe nova com o mesmo nome (`eval.c`, `goto override_class`). O Ruby 1.8.2 em diante, incluindo o 1.8.7 do Kerberus, lança `TypeError` | Antes de cada `class Nome < Constante` dos scripts, na mesma linha, o legacy18 remove `Nome` quando a superclasse atual difere; o Ruby 1.8.7 então define a classe nova como o 1.8.1. Cada caso vira `[RUBY181_CLASS_OVERRIDE]` com section e linha. Nenhum arquivo do jogo muda | `test_ruby181_classes.rb` (falha com o mesmo erro do aparelho na 6.3.1) |
+| 16 | Uranium para ao carregar a section 199: `superclass mismatch for class Window_PokemonBag` | Ruby 1.8 | O RPG Maker XP usa o Ruby 1.8.1, que ao reabrir uma classe com outra superclasse cria uma classe nova com o mesmo nome (`eval.c`, `goto override_class`). O Ruby 1.8.2 em diante, incluindo o 1.8.7 do Kerberus, lança `TypeError` | Antes de cada `class Nome < Constante` dos scripts, na mesma linha, o legacy18 remove `Nome` quando a superclasse atual difere; o Ruby 1.8.7 então define a classe nova como o 1.8.1. Cada caso vira `[RUBY181_CLASS_OVERRIDE]` com section e linha. Nenhum arquivo do jogo muda. Na 6.3.3 a regra foi para o `NODE_CLASS` do `eval.c` do Ruby 1.8 compilado no CI; o texto dos scripts fica intacto e a versão por texto ficou como fallback | `test_ruby181_classes.rb` (interpretador) e `test_ruby181_transform.rb` (fallback) |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
 ## 3. Implementado
@@ -72,7 +75,7 @@ com o override `.kerberus-runtime`.
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real (13 arquivos) | 472 | OK |
+| Legacy18 em Ruby 1.8.7 real com o patch RGSS1 (14 arquivos) | 495 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
 | Regressão modern31/Infinite Fusion em Ruby 3.1.6 | 7 + sha256 | OK |
 | Java: seleção de runtime | 14 casos | OK |
@@ -86,9 +89,9 @@ com o override `.kerberus-runtime`.
 
 - Só o Uranium foi aberto no aparelho: na 6.3 até descobrir o bug 15 e na 6.3.1 até o bug 16. Os
   demais estados só mudam com o teste no aparelho.
-- **Regra de superclasse do Ruby 1.8.1** vale para `class Nome < Constante` escritos nos scripts. Classes
-  criadas por `eval` de texto montado durante o jogo, ou com superclasse que não é constante
-  (`Struct.new(...)`), seguem a regra do Ruby 1.8.7. Outras diferenças entre o 1.8.1 e o 1.8.7 só
+- **Regra de superclasse do Ruby 1.8.1**: no interpretador da 6.3.3 vale para qualquer classe. Só
+  um Ruby 1.8 sem o patch, como o de um build antigo do Termux, cai no fallback por texto, que cobre
+  apenas `class Nome < Constante` escritos nos scripts. Outras diferenças entre o 1.8.1 e o 1.8.7 só
   serão tratadas quando um jogo real mostrar o erro.
 - **Toques mais curtos que um quadro** (cerca de 16 ms) podem se perder: o estado é lido quando o
   jogo consulta, e o Windows guardaria esse toque no bit 0 do `GetAsyncKeyState`.
@@ -114,7 +117,7 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Instalar a APK da 6.3.2 e abrir o jogo.
+1. Instalar a APK da 6.3.3 e abrir o jogo.
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.

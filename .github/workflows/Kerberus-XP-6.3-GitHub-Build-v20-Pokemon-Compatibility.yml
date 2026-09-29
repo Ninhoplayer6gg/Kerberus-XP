@@ -88,8 +88,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ruby18
-          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-v1
+          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-rgss1-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py') }}
 
+      # Same interpreter semantics as the APK: the RGSS1 (Ruby 1.8.1)
+      # superclass rule from scripts/patch-ruby18-rgss1.py.
       - name: Build real Ruby 1.8.7 (host, tests only)
         if: steps.ruby18-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -97,6 +99,7 @@ jobs:
           set -euo pipefail
           git clone -q --depth 1 --branch "$RUBY18_TAG" https://github.com/ruby/ruby "$RUNNER_TEMP/ruby187-src"
           cd "$RUNNER_TEMP/ruby187-src"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-rgss1.py" eval.c
           autoconf
           printf 'option nodynamic\nstringio\nstrscan\nzlib\n' > ext/Setup
           CFLAGS="-O2 -g -fno-strict-aliasing -std=gnu89 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types" \
@@ -322,10 +325,10 @@ jobs:
           echo KERBERUS_PREBUILT_CHECKPOINT_OK
 
       # Ruby 1.8 (legacy18) is compiled here from the pinned joiplay/ruby
-      # ruby_1_8 source, with the Termux builder's patches and flags. The
-      # checkpoint's prebuilt copy is the reference: config.h, headers and
-      # archive members must match it exactly, then the fresh build replaces
-      # it for the APK.
+      # ruby_1_8 source, with the Termux builder's patches and flags plus
+      # the RGSS1 superclass rule in eval.c. The checkpoint's prebuilt copy
+      # is the reference: config.h, headers and archive members must match
+      # it exactly, then the fresh build replaces it for the APK.
       - name: Build Ruby 1.8 (legacy18) from pinned source
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
@@ -667,6 +670,14 @@ jobs:
             done < <(find "$LIBDIR" -type f -name '*.so' -print | sort)
 
             # Kerberus 6.3: each engine embeds only its own compatibility layer.
+            # The eval.c patch reads the hook global through a C string (NUL
+            # terminated); the bootstrap text only contains "... = HOOK".
+            has_rgss1_rule() { python3 -c 'import sys; sys.exit(0 if b"$__kerberus_rgss1_class_override\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_rgss1_rule "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o Ruby 1.8 com a regra RGSS1 (eval.c)"; exit 1; }
+            if has_rgss1_rule "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o patch do Ruby 1.8"; exit 1; fi
+            echo "[AUDIT] Ruby 1.8 com a regra de superclasse do RGSS1 (eval.c)"
             LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z18.so" || {
               echo "[AUDIT][ERRO] libmkxp-z18.so sem o bootstrap Legacy18 (WinBridge)"; exit 1; }
             if LC_ALL=C grep -a -q 'Kerberus Shared Compatibility' "$LIBDIR/libmkxp-z18.so"; then
