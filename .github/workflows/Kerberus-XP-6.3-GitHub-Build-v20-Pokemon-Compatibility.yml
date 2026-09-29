@@ -54,10 +54,34 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Ruby 3.1 (modern31 regression)
-        uses: ruby/setup-ruby@v1
+      # Only GitHub-created actions are used (the repository policy may block
+      # third-party actions). Ruby 3.1 comes from the runner toolcache; if the
+      # image does not ship it, it is built once from the official tarball.
+      - name: Cache Ruby 3.1 fallback (host, tests only)
+        id: ruby31-cache
+        uses: actions/cache@v4
         with:
-          ruby-version: "3.1"
+          path: ${{ runner.temp }}/ruby31
+          key: ruby31-3.1.6-ubuntu22-v1
+
+      - name: Locate Ruby 3.1 (modern31 regression)
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUBY31="$(ls -d /opt/hostedtoolcache/Ruby/3.1.*/x64/bin/ruby 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -z "$RUBY31" ] && [ -x "$RUNNER_TEMP/ruby31/bin/ruby" ]; then RUBY31="$RUNNER_TEMP/ruby31/bin/ruby"; fi
+          if [ -z "$RUBY31" ]; then
+            cd "$RUNNER_TEMP"
+            wget -q https://cache.ruby-lang.org/pub/ruby/3.1/ruby-3.1.6.tar.gz
+            tar xzf ruby-3.1.6.tar.gz
+            cd ruby-3.1.6
+            ./configure --prefix="$RUNNER_TEMP/ruby31" --disable-install-doc > configure.log
+            make -j"$(nproc)" > make.log 2>&1 || { tail -80 make.log; exit 1; }
+            make install-nodoc > install.log 2>&1 || { tail -80 install.log; exit 1; }
+            RUBY31="$RUNNER_TEMP/ruby31/bin/ruby"
+          fi
+          "$RUBY31" -v
+          echo "RUBY31=$RUBY31" >> "$GITHUB_ENV"
 
       - name: Cache real Ruby 1.8.7 (host, tests only)
         id: ruby18-cache
@@ -102,7 +126,7 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
-          RUBY31="$(command -v ruby)" bash tests/modern31/run-modern31-tests.sh | tee "$GITHUB_WORKSPACE/modern31-tests.log"
+          bash tests/modern31/run-modern31-tests.sh | tee "$GITHUB_WORKSPACE/modern31-tests.log"
 
       - name: C++ checks for both engines and native lifecycle test
         shell: bash
@@ -125,8 +149,8 @@ jobs:
           export RUBY18="$RUNNER_TEMP/ruby18/bin/ruby"
           export RUBY18_INCLUDE="$("$RUBY18" -rrbconfig -e 'print Config::CONFIG["archdir"]')"
           export RUBY18_ARCH_INCLUDE="$RUBY18_INCLUDE"
-          export RUBY31_INCLUDE="$(ruby -e 'print RbConfig::CONFIG["rubyhdrdir"]')"
-          export RUBY31_ARCH_INCLUDE="$(ruby -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
+          export RUBY31_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyhdrdir"]')"
+          export RUBY31_ARCH_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
           bash tools/host-compile-check.sh | tee "$GITHUB_WORKSPACE/host-cxx.log"
           bash tests/native/run-lifecycle-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
 
