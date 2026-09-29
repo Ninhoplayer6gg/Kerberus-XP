@@ -15,6 +15,8 @@ permissions:
 env:
   SOURCE_ZIP: Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip
   RUBY18_TAG: v1_8_7_374
+  ONIG_TAG: v6.9.10
+  ONIG_PIN: 4ef89209a239c1aea328cf13c05a2807e5c146d1
 
 jobs:
   tests:
@@ -88,10 +90,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ruby18
-          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-kerberus-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py') }}
+          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-kerberus-${{ env.ONIG_PIN }}-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py', '_kerberus/project/scripts/patch-ruby18-oniguruma.py', '_kerberus/project/scripts/ruby18-oniguruma/*') }}
 
-      # Same interpreter as the APK: the RGSS1 (Ruby 1.8.1) superclass rule
-      # and the GC/method-cache tuning with GC statistics.
+      # Same interpreter as the APK: the RGSS1 (Ruby 1.8.1) superclass rule,
+      # the GC/method-cache tuning with GC statistics, and Oniguruma for the
+      # RGSS1 regex syntax the GNU engine rejects.
       - name: Build real Ruby 1.8.7 (host, tests only)
         if: steps.ruby18-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -101,6 +104,9 @@ jobs:
           cd "$RUNNER_TEMP/ruby187-src"
           python3 "$PROJECT_DIR/scripts/patch-ruby18-rgss1.py" eval.c
           python3 "$PROJECT_DIR/scripts/patch-ruby18-performance.py" .
+          git clone -q --depth 1 --branch "$ONIG_TAG" https://github.com/kkos/oniguruma "$RUNNER_TEMP/oniguruma-src"
+          test "$(git -C "$RUNNER_TEMP/oniguruma-src" rev-parse HEAD)" = "$ONIG_PIN"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-oniguruma.py" . "$RUNNER_TEMP/oniguruma-src"
           autoconf
           printf 'option nodynamic\nstringio\nstrscan\nzlib\n' > ext/Setup
           CFLAGS="-O2 -g -fno-strict-aliasing -std=gnu89 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types" \
@@ -108,6 +114,7 @@ jobs:
           make -j"$(nproc)" > make.log 2>&1 || { tail -80 make.log; exit 1; }
           make install > install.log 2>&1
           "$RUNNER_TEMP/ruby18/bin/ruby" -v
+          "$RUNNER_TEMP/ruby18/bin/ruby" -e 'p Regexp.kerberus_oniguruma'
 
       - name: Java host tests and source preflight
         shell: bash
@@ -681,7 +688,16 @@ jobs:
             has_perf_patch() { python3 -c 'import sys; sys.exit(0 if b"KERBERUS_GC_MALLOC_LIMIT\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
             has_perf_patch "$LIBDIR/libmkxp-z18.so" || {
               echo "[AUDIT][ERRO] libmkxp-z18.so sem o patch de desempenho do Ruby 1.8 (gc.c)"; exit 1; }
-            echo "[AUDIT] Ruby 1.8 com a regra de superclasse do RGSS1 (eval.c) e o patch de desempenho (gc.c)"
+            # Oniguruma (6.4.1): Regexp.kerberus_oniguruma is a C string of re.c.
+            has_onig() { python3 -c 'import sys; sys.exit(0 if b"kerberus_oniguruma\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_onig "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o Oniguruma do Ruby 1.8 (regex do RGSS1)"; exit 1; }
+            if has_onig "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o Oniguruma do Ruby 1.8"; exit 1; fi
+            unzip -l "$OUT" > "$AUDIT_DIR/apk-files.txt"
+            grep -q 'assets/licenses/oniguruma-COPYING.txt' "$AUDIT_DIR/apk-files.txt" || {
+              echo "[AUDIT][ERRO] APK sem a licenca do Oniguruma (assets/licenses)"; exit 1; }
+            echo "[AUDIT] Ruby 1.8 com a regra de superclasse do RGSS1 (eval.c), o patch de desempenho (gc.c) e o Oniguruma (regex do RGSS1)"
             LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z18.so" || {
               echo "[AUDIT][ERRO] libmkxp-z18.so sem o bootstrap Legacy18 (WinBridge)"; exit 1; }
             if LC_ALL=C grep -a -q 'Kerberus Shared Compatibility' "$LIBDIR/libmkxp-z18.so"; then

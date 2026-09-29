@@ -19,13 +19,18 @@
 > **6.4.0.** Atualização grande de compatibilidade e desempenho: 99 funções Win32 comuns que paravam o
 > jogo passam a funcionar (entre elas `SetPriorityClass`, presente no Uranium), pulo de quadros do
 > RGSS1, coleta de lixo e cache de métodos do Ruby 1.8 ajustados com medição, e relatório `[PERF]`
-> de desempenho no log. Nenhum jogo foi testado no aparelho com a 6.4.0.
+> de desempenho no log.
+>
+> **6.4.1.** Com a 6.4.0 o Uranium passou da section 199 (classes) e já tinha controles, pulo de
+> quadros e as APIs Win32 resolvidas, mas parou na section 253 (GENERATE WIKI PAGES) com
+> `undefined (?...) sequence: /(?<!\\)"/`. Causa e correção: bugs 22 a 24. Nenhum jogo foi testado
+> no aparelho com a 6.4.1.
 
 ## 1. Estado por jogo
 
 | Jogo | Runtime | Última evidência real | Estado 6.3 | O que a 6.3 muda para ele |
 |---|---|---|---|---|
-| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | 6.3.1: carrega as sections até a 199 e para em `superclass mismatch for class Window_PokemonBag` (relato do usuário) | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 na 6.3.2, no interpretador desde a 6.3.3; aguarda novo teste | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
+| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | 6.4.0: passa da section 199 (regra de classes aplicada pelo interpretador), controles e pulo de quadros ativos, e para na section 253 com `undefined (?...) sequence` (log do usuário) | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; aguarda novo teste | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
 | Pokémon Insurgence | legacy18 | Nenhuma | Não testado | HMode7 e Winsock declarados no carregamento não bloqueiam mais; rede responde com erros Winsock documentados; `GetKeyboardState` do módulo `Keys` 9× mais rápido |
 | Pokémon Xenoverse | legacy18 | Nenhuma | Não testado | Port do Zeus Video Player (OGV nativo), KleinBitmap, MCI mapeado para o áudio nativo |
 | Pokémon Infinite Fusion | modern31 (Ruby 3.1) | Entrava no jogo (6.1.x) | Regressão automatizada OK; aparelho pendente | Nada no comportamento do jogo. Bootstrap moderno byte a byte idêntico (sha256 fixado). No C++ do modern31 entraram só dois registros de diagnóstico (marco BOOT e relatório de exceção). Três proteções independentes na seleção de runtime |
@@ -58,6 +63,9 @@ com o override `.kerberus-runtime`.
 | 19 | O diagnóstico listava `xinput1_3`, `xinput9_1_0` e `RGSS Linker` como não classificadas | Diagnóstico | A análise estática procurava o nome da DLL como escrito pelo jogo | Mesmos aliases de DLL e mesmo sufixo `A` do WinBridge; um teste compara as listas de aliases do Java e do Ruby | `CompatibilityStatusHostTest` |
 | 20 | Em aparelho lento o jogo roda em câmera lenta em vez de pular quadros | Desempenho | O RGSS1 pula quadros quando atrasa; o mkxp-z vem com isso desligado | O legacy18 liga `Graphics.frameskip` (desligável por jogo) | `test_performance.rb` |
 | 21 | Coletas de lixo frequentes (a cada 8 MB alocados) em jogos grandes | Desempenho | Limites do Ruby 1.8 pensados para PCs de 2003 | Limite de 16 MB (medido: 43% menos coletas e 37% menos tempo de GC na carga leve), cache de métodos 8x maior, ajuste por jogo | benchmark no documento técnico |
+| 22 | Uranium para ao carregar a section 253 (GENERATE WIKI PAGES): `undefined (?...) sequence: /(?<!\\)"/` | Ruby 1.8 | O RPG Maker XP compila regex com o Oniguruma, que aceita look-behind e grupos nomeados; o motor GNU do Ruby 1.8.7 recusa essa sintaxe ao ler o script, e um único literal derruba a section inteira, mesmo sem ser usado | O Ruby 1.8 do CI (`scripts/patch-ruby18-oniguruma.py`) mantém o GNU para toda regex que ele aceita e passa só as recusadas ao Oniguruma 6.9.10 (BSD 2-Clause, commit fixado), com sintaxe Ruby e o `$KCODE` em uso; se os dois recusam, o erro do GNU continua. Nenhum script do jogo muda | `test_regex_rgss1.rb` (48 verificações, com a regex exata do Uranium; falha no Ruby sem o patch com o mesmo erro do aparelho) |
+| 23 | O relatório desse erro dizia `line=369`, mas a regex estava na linha 270 | Diagnóstico | O Ruby 1.8 lança o `SyntaxError` na última linha da section; a linha do erro fica na mensagem | No legacy18 o relatório usa a linha `SectionNNN:linha:` da mensagem (`kerberus/exception-line.h`) | `exception_line_test.cpp` (8 verificações) |
+| 24 | `GetDiskFreeSpaceExA` falhava com `ERROR_NOT_SUPPORTED` no aparelho, apesar de a 6.4.0 anunciar espaço real | Win32API | O provider chamava `KerberusNative.disk_space`, que só existia no dublê dos testes | `disk_space` nativo com `statvfs` no legacy18 | checagem C++ e conferência com `df` no host |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
 ## 3. Implementado
@@ -83,13 +91,17 @@ com o override `.kerberus-runtime`.
 - **6.4**: 99 funções Win32 novas, análise estática com aliases, pulo de quadros do RGSS1, patch de
   desempenho do Ruby 1.8 (GC e cache de métodos), relatório `[PERF]` com coletas de lixo, opções
   `frameskip` e `gc_malloc_limit`.
+- **6.4.1**: Oniguruma no Ruby 1.8 para a sintaxe de regex do RGSS1 (look-behind, grupos nomeados)
+  que o GNU recusa; linha certa no relatório de `SyntaxError`; `disk_space` nativo. Licença em
+  `THIRD-PARTY-NOTICES.md` e no APK.
 
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real com os patches RGSS1 e de desempenho (16 arquivos) | 594 | OK |
+| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho e Oniguruma (17 arquivos) | 642 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
+| Linha do `SyntaxError` no relatório de erro (C++) | 8 | OK |
 | Regressão modern31/Infinite Fusion em Ruby 3.1.6 | 7 + sha256 | OK |
 | Java: seleção de runtime | 14 casos | OK |
 | Java: estado de compatibilidade e opções | 14 | OK |
@@ -102,6 +114,10 @@ com o override `.kerberus-runtime`.
 
 - Só o Uranium foi aberto no aparelho: na 6.3 até descobrir o bug 15 e na 6.3.1 até o bug 16. Os
   demais estados só mudam com o teste no aparelho.
+- **Regex**: o Oniguruma só entra para padrões que o GNU recusa. Um padrão que os dois aceitam, mas
+  com sentidos diferentes (por exemplo `[[]` ou `&&` dentro de `[...]`), continua com o sentido do
+  GNU, como na 6.4.0. Trocar o motor inteiro seria mais fiel ao RGSS1, mas mudaria regex que hoje
+  funcionam; só vale a pena se um jogo real mostrar essa diferença.
 - **Regra de superclasse do Ruby 1.8.1**: no interpretador da 6.3.3 vale para qualquer classe. Só
   um Ruby 1.8 sem o patch, como o de um build antigo do Termux, cai no fallback por texto, que cobre
   apenas `class Nome < Constante` escritos nos scripts. Outras diferenças entre o 1.8.1 e o 1.8.7 só
@@ -135,7 +151,8 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Instalar a APK da 6.4.0 e abrir o jogo.
+1. Desinstalar a versão anterior (a chave de debug muda a cada build), instalar a APK da 6.4.1,
+   importar o jogo de novo e abrir.
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.
@@ -147,6 +164,27 @@ com o override `.kerberus-runtime`.
    assinatura, script e linha para decidir entre provider genérico, port ou perfil.
 
 ## 7. Verificação desta entrega
+
+### 6.4.1 (regex do RGSS1 com Oniguruma no Ruby 1.8)
+
+| Item | Situação |
+|---|---|
+| Testes de host (Java, Ruby 1.8.7 real com os três patches: 17 arquivos e 642 verificações; Ruby 3.1; C++ nos dois runtimes; ciclo de vida nativo; linha do `SyntaxError`) | Passaram localmente |
+| `test_regex_rgss1.rb` | No Ruby sem o patch falha com o mesmo erro do aparelho (`Section253:3: undefined (?...) sequence: /(?<!\\)"/`); com o patch, 48 verificações passam |
+| `scripts/build-ruby18-android.sh` em modo cruzado (gcc aarch64 do host) | Passou: núcleo com 60 objetos (41 + 19 do Oniguruma); `regex.h` = referência + o campo; membros = referência + Oniguruma; programa de teste liga sem símbolos faltando. Todos os objetos também compilam com clang para aarch64 |
+| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.4.0 |
+| Build da APK no CI e auditoria | Aguardando a execução deste commit |
+| Teste no aparelho | Pendente: reabrir o Uranium com a 6.4.1 |
+
+### 6.4.0 (compatibilidade e desempenho)
+
+Workflow v20, execução 36611024936 (commit `da087ee`), verde: testes de host, Ruby 1.8 compilado no
+CI, APK e auditoria. https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36611024936
+
+No aparelho (log do usuário): controles respondendo (`GetAsyncKeyState` 1330 chamadas,
+`XInputGetState` 150), regra de classes aplicada pelo interpretador
+(`[RUBY181_CLASS_OVERRIDE] Section199:302 Window_PokemonBag`), pulo de quadros ligado, análise sem
+APIs não classificadas. Parou na section 253 com o erro de regex corrigido na 6.4.1.
 
 ### 6.3.3 (Ruby 1.8 compilado no CI com a regra do 1.8.1 no `eval.c`)
 
