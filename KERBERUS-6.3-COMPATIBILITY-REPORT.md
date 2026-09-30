@@ -23,14 +23,20 @@
 >
 > **6.4.1.** Com a 6.4.0 o Uranium passou da section 199 (classes) e já tinha controles, pulo de
 > quadros e as APIs Win32 resolvidas, mas parou na section 253 (GENERATE WIKI PAGES) com
-> `undefined (?...) sequence: /(?<!\\)"/`. Causa e correção: bugs 22 a 25. Nenhum jogo foi testado
-> no aparelho com a 6.4.1.
+> `undefined (?...) sequence: /(?<!\\)"/`. Causa e correção: bugs 22 a 25.
+>
+> **6.4.2.** No aparelho, a 6.4.1 parou na tela de título (`Sprite_Resizer:209`, `ENV["TEMP"]` nil).
+> Em vez de mais uma APK por erro, o Uranium passou a rodar **no motor legacy18 real compilado para
+> PC** (`tools/game-harness/`), com teclas de verdade, do título até a captura do primeiro Pokémon,
+> evolução e save/load, e numa varredura automática por todos os mapas. Tudo o que apareceu está nos
+> bugs 26 a 34, corrigidos juntos. Isso é teste real do jogo, mas **no PC**: o aparelho ainda precisa
+> confirmar (toque, GPU real, desempenho).
 
 ## 1. Estado por jogo
 
 | Jogo | Runtime | Última evidência real | Estado 6.3 | O que a 6.3 muda para ele |
 |---|---|---|---|---|
-| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | 6.4.0: passa da section 199 (regra de classes aplicada pelo interpretador), controles e pulo de quadros ativos, e para na section 253 com `undefined (?...) sequence` (log do usuário) | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; aguarda novo teste | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
+| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | Aparelho, 6.4.1: carrega todas as sections e para na tela de título (`ENV["TEMP"]`). PC, motor real, 6.4.2: título, novo jogo, intro, controles, casa, cutscenes, laboratório, inicial, batalha do rival, captura, evolução, save/backup/load e varredura de todos os mapas sem erro, com textura máxima de 4096 | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; bugs 26–34 na 6.4.2; aguarda teste no aparelho | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
 | Pokémon Insurgence | legacy18 | Nenhuma | Não testado | HMode7 e Winsock declarados no carregamento não bloqueiam mais; rede responde com erros Winsock documentados; `GetKeyboardState` do módulo `Keys` 9× mais rápido |
 | Pokémon Xenoverse | legacy18 | Nenhuma | Não testado | Port do Zeus Video Player (OGV nativo), KleinBitmap, MCI mapeado para o áudio nativo |
 | Pokémon Infinite Fusion | modern31 (Ruby 3.1) | Entrava no jogo (6.1.x) | Regressão automatizada OK; aparelho pendente | Nada no comportamento do jogo. Bootstrap moderno byte a byte idêntico (sha256 fixado). No C++ do modern31 entraram só dois registros de diagnóstico (marco BOOT e relatório de exceção). Três proteções independentes na seleção de runtime |
@@ -67,6 +73,15 @@ com o override `.kerberus-runtime`.
 | 23 | O relatório desse erro dizia `line=369`, mas a regex estava na linha 270 | Diagnóstico | O Ruby 1.8 lança o `SyntaxError` na última linha da section; a linha do erro fica na mensagem | No legacy18 o relatório usa a linha `SectionNNN:linha:` da mensagem (`kerberus/exception-line.h`) | `exception_line_test.cpp` (8 verificações) |
 | 24 | `GetDiskFreeSpaceExA` falhava com `ERROR_NOT_SUPPORTED` no aparelho, apesar de a 6.4.0 anunciar espaço real | Win32API | O provider chamava `KerberusNative.disk_space`, que só existia no dublê dos testes | `disk_space` nativo com `statvfs` no legacy18 | checagem C++ e conferência com `df` no host |
 | 25 | O diagnóstico mostrava `IMPORTAÇÃO INTERROMPIDA ... 3911/6540` e a pasta parcial ocupava espaço para sempre | Launcher | Com o processo morto no meio da importação, o `finally` que apaga a pasta de preparação (`games/.import-*`) e as cópias do ZIP no cache nunca roda. O jogo já importado não é afetado: a importação só troca a pasta no final | O launcher apaga essas sobras ao abrir, no mesmo worker das importações, antes de qualquer importação nova; jogos importados e outros arquivos ficam intactos | `ImportLeftoversHostTest` |
+| 26 | Tela de título do Uranium: `NoMethodError: undefined method '+' for nil` em `Sprite_Resizer:209` (6.4.1 no aparelho) | Ambiente Windows | O Essentials v16/v17 monta caminhos com `ENV["TEMP"]`; o Android não tem as variáveis do Windows. A captura de tela ainda gravava um BMP em `%TEMP%` pela `rubyscreen.dll` | O legacy18 cria só as variáveis que faltam (`TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE` em pastas reais `.kerberus/` do jogo; `USERNAME=Player`, `COMPUTERNAME`, `OS`) e espelha no `GetEnvironmentVariableA`; o `snap_to_bitmap` do jogo vira a captura nativa, mantendo o pós-processamento e as linhas da section. Saves continuam onde estavam | `test_uranium_runtime.rb` |
+| 27 | `Bitmap.new` de um arquivo gravado durante o jogo: "No such file or directory" | Filesystem | O mkxp-z resolve imagens por um cache de caminhos montado na abertura | Uma nova tentativa por caminho, depois de `System.reload_cache`, só se o arquivo existe (absoluto dentro do jogo vira relativo); ausente continua erro | `test_uranium_runtime.rb` |
+| 28 | Mapa com evento sem gráfico parava com `File Graphics/Characters/ not found` | Port `gif_dll` | O `GifBitmap` do Essentials devolve um bitmap vazio para nome vazio ou arquivo ausente; o port lançava o erro | Mesmo comportamento do Essentials; arquivo ausente vira `GIF_MISSING` no log | `test_uranium_runtime.rb` |
+| 29 | Tela de controles do Uranium gravava Enter como "Separator" | Input | O mkxp-z liga `VK_SEPARATOR` (0x6C) e `VK_PLAY` (0xFA) a teclas que já têm VK próprio; um teclado Windows nunca envia essas duas | `GetAsyncKeyState`/`GetKeyboardState` nunca as reportam | `test_uranium_runtime.rb` |
+| 30 | Jogo fecha (segfault) num diálogo em português | C++ (os dois motores) | Um U+200B sozinho não tem largura; o SDL_ttf devolve `NULL` e o `draw_text` do mkxp-z usava a superfície sem checar | Não desenha nada, como o RGSS; o mesmo para o contorno | reproduzido no harness com gdb |
+| 31 | F12 fechava o jogo | Port novo `hard_reset` | A section 0 do Uranium relança o executável e chama `exit`; o mkxp-z reinicia as sections no mesmo processo | Só o relançamento sai (evento `RESET`); CRLF e LF | `test_uranium_runtime.rb` |
+| 32 | `Operation not supported for mega surfaces` ao entrar na Comet Cave | Gráficos | O `CustomTilemap` do Essentials v15–v17 (padrão, `MAPVIEWMODE 1`) põe o tileset inteiro num Sprite; tileset maior que a textura da GPU (até 256x21256 no Uranium) não pode ser bitmap de Sprite | Port `mega_tileset`: para esse tileset o tilemap usa o próprio caminho de tiles redimensionados (cópia única por tile para um bitmap 32x32) | `test_uranium_runtime.rb`; varredura de mapas |
+| 33 | Tiles de camadas superiores apagariam os de baixo em mapas com tileset gigante | C++ (legacy18) | Cópia de uma mega surface para a GPU sem mistura de transparência | `blt`/`stretch_blt` de mega surface pelo pipeline normal de mistura e opacidade, por páginas na GPU | varredura de mapas (captura de cada mapa) |
+| 34 | Com textura máxima 4096 (celulares comuns) a tela de título e batalhas com Pokémon animados largos paravam: `Texture dimensions [5600, 80] exceed hardware capabilities` | C++ (legacy18) | O EliteBattle copia a faixa de animação inteira (até 15360x80; 184 sprites passam de 4096 e 66 de 8192) para `Bitmap.new(l, a)`; o mkxp-z só aceitava imagem grande carregada de arquivo | `Bitmap.new` acima do limite fica na RAM, como no RGSS1; cópia, limpeza, pixels, `raw_data=` e clone em software; cópia para a GPU por páginas. Sprite/Plane com esse bitmap continua erro preciso | harness com `maxTextureSize` 4096; `host-compile-check.sh` nos dois motores |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
 ## 3. Implementado
@@ -95,12 +110,16 @@ com o override `.kerberus-runtime`.
 - **6.4.1**: Oniguruma no Ruby 1.8 para a sintaxe de regex do RGSS1 (look-behind, grupos nomeados)
   que o GNU recusa; linha certa no relatório de `SyntaxError`; `disk_space` nativo; limpeza das
   sobras de importação interrompida. Licença em `THIRD-PARTY-NOTICES.md` e no APK.
+- **6.4.2**: variáveis de ambiente do Windows e arquivos criados em execução (`83_winenv.rb`);
+  ports `hard_reset` e `mega_tileset`; captura nativa no `bitmap_memory`; `GifBitmap` vazio como no
+  Essentials; teclas que o Windows nunca envia; bitmaps maiores que a GPU no legacy18 (C++);
+  `draw_text` sem crash com texto de largura zero; harness de desktop em `tools/game-harness/`.
 
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho e Oniguruma (17 arquivos) | 642 | OK |
+| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho e Oniguruma (18 arquivos) | 692 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
 | Linha do `SyntaxError` no relatório de erro (C++) | 8 | OK |
 | Regressão modern31/Infinite Fusion em Ruby 3.1.6 | 7 + sha256 | OK |
@@ -108,7 +127,8 @@ com o override `.kerberus-runtime`.
 | Java: estado de compatibilidade e opções | 14 | OK |
 | Java: SessionLock e controles (existentes) | – | OK |
 | Java: sobras de importação interrompida | 8 | OK |
-| C++: 6 arquivos × 2 runtimes (clang, C++14) | 12 | OK |
+| C++: 7 arquivos × 2 runtimes (clang, C++14), incluindo `bitmap.cpp` | 14 | OK |
+| Uranium no motor real (PC, harness de desktop, textura 4096) | jogo do título à evolução + todos os mapas | OK (detalhes na seção 1) |
 | Java do app inteiro contra `android.jar` API 33, alvo Java 8 | 146 classes | OK |
 | Sincronia de gerados (header, catálogo, lista de APIs) | 3 | OK |
 
@@ -116,6 +136,13 @@ com o override `.kerberus-runtime`.
 
 - Só o Uranium foi aberto no aparelho: na 6.3 até descobrir o bug 15 e na 6.3.1 até o bug 16. Os
   demais estados só mudam com o teste no aparelho.
+- **Harness de desktop (6.4.2)**: o Uranium rodou no motor real, mas no PC. A história foi jogada até
+  a captura do primeiro Pokémon; o resto do jogo foi coberto pela varredura de mapas (cada mapa aberto
+  com seus eventos automáticos, batalhas de treinadores que disparam ao entrar e mensagens), não por
+  uma partida completa. Ginásios, Liga e eventos que dependem da ordem da história ainda podem
+  mostrar algo novo; o harness fica no projeto para achar esses casos também no PC.
+- **Bitmap maior que a GPU** mostrado direto num Sprite/Plane continua erro preciso ("mega surfaces");
+  o Uranium não faz isso (tilemap e EliteBattle copiam por partes).
 - **Regex**: o Oniguruma só entra para padrões que o GNU recusa. Um padrão que os dois aceitam, mas
   com sentidos diferentes (por exemplo `[[]` ou `&&` dentro de `[...]`), continua com o sentido do
   GNU, como na 6.4.0. Trocar o motor inteiro seria mais fiel ao RGSS1, mas mudaria regex que hoje
@@ -153,8 +180,8 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Desinstalar a versão anterior (a chave de debug muda a cada build), instalar a APK da 6.4.1,
-   importar o jogo de novo e abrir.
+1. Desinstalar a versão anterior (a chave de debug muda a cada build), instalar a APK da 6.4.2,
+   importar o jogo de novo e abrir. Saves do Uranium ficam na pasta do jogo (`Uranium.rxdata`).
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.
@@ -164,111 +191,3 @@ com o override `.kerberus-runtime`.
    batalha → áudio → save → load → troca de mapas; os marcos aparecem sozinhos no diagnóstico.
 5. A cada falha: enviar o bloco `[WINBRIDGE]` ou `[RUBY_EXCEPTION]`. Ele já traz dll, função,
    assinatura, script e linha para decidir entre provider genérico, port ou perfil.
-
-## 7. Verificação desta entrega
-
-### 6.4.1 (regex do RGSS1 com Oniguruma no Ruby 1.8)
-
-| Item | Situação |
-|---|---|
-| Testes de host (Java, Ruby 1.8.7 real com os três patches: 17 arquivos e 642 verificações; Ruby 3.1; C++ nos dois runtimes; ciclo de vida nativo; linha do `SyntaxError`) | Passaram localmente e no job `tests` do CI |
-| `test_regex_rgss1.rb` | No Ruby sem o patch falha com o mesmo erro do aparelho (`Section253:3: undefined (?...) sequence: /(?<!\\)"/`); com o patch, 48 verificações passam |
-| `scripts/build-ruby18-android.sh` em modo cruzado (gcc aarch64 do host) | Passou: núcleo com 60 objetos (41 + 19 do Oniguruma); `regex.h` = referência + o campo; membros = referência + Oniguruma; programa de teste liga sem símbolos faltando. Todos os objetos também compilam com clang para aarch64 |
-| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.4.0 |
-| Build da APK no CI e auditoria (execução 36638774215, commit `8daa942`) | **Passaram**: Ruby 1.8 com Oniguruma compilado pelo NDK e conferido contra a referência; `KERBERUS_APK_AUDIT_OK` com o Oniguruma só no `libmkxp-z18.so` e a licença em `assets/licenses` |
-| Limpeza das sobras de importação interrompida (commit seguinte) | `ImportLeftoversHostTest` passou localmente; APK na próxima execução do CI |
-| Teste no aparelho | Pendente: reabrir o Uranium com a 6.4.1 |
-
-https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36638774215
-
-```
-sha256  ec27190692ea507aab3f1ea53ff4f4cc1fca1ddf1815f0be5db5091a3c4ec60b  Kerberus-XP-6.3-arm64-debug.apk (8daa942)
-```
-
-### 6.4.0 (compatibilidade e desempenho)
-
-Workflow v20, execução 36611024936 (commit `da087ee`), verde: testes de host, Ruby 1.8 compilado no
-CI, APK e auditoria. https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36611024936
-
-No aparelho (log do usuário): controles respondendo (`GetAsyncKeyState` 1330 chamadas,
-`XInputGetState` 150), regra de classes aplicada pelo interpretador
-(`[RUBY181_CLASS_OVERRIDE] Section199:302 Window_PokemonBag`), pulo de quadros ligado, análise sem
-APIs não classificadas. Parou na section 253 com o erro de regex corrigido na 6.4.1.
-
-### 6.3.3 (Ruby 1.8 compilado no CI com a regra do 1.8.1 no `eval.c`)
-
-Workflow v20, execução 36607644952 (commit `438d323`), verde: testes de host, APK e auditoria, que
-confere o patch do Ruby 1.8 dentro do `libmkxp-z18.so`.
-https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36607644952
-
-### 6.3.2 (regra de superclasse do RGSS1 e relatório de erro)
-
-Workflow v20, execução 36602792658 (commit `968ca31`):
-https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36602792658
-
-| Item | Situação |
-|---|---|
-| Testes de host (Java, Ruby 1.8.7 real com 13 arquivos e 472 verificações, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
-| `test_ruby181_classes.rb` | Reproduz o erro do aparelho na 6.3.1 e passa na 6.3.2 |
-| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.3.1 |
-| Build da APK ARM64 e auditoria | **Passaram** (`KERBERUS_APK_AUDIT_OK`) |
-| Teste no aparelho | Pendente: reabrir o Uranium com a 6.3.2 |
-
-```
-sha256  b6a6741c0347e15df1f26d2181729f82da7bf6e80acf119404dff07b5e7dc5f7  Kerberus-XP-6.3-arm64-debug.apk
-```
-
-### 6.3.1 (correção dos controles)
-
-Workflow v20, execução 36600226232 (commit `623c862`):
-https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36600226232
-
-| Item | Situação |
-|---|---|
-| Testes de host: Java (inclui o `ControlsHostTest` ampliado pelo dono do repositório), Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
-| `test_input_live.rb` | 13 falhas na 6.3, passa na 6.3.1 |
-| Saída do pré-processador do `binding-mri.cpp` no modern31 | Idêntica byte a byte à 6.3 |
-| Java do app inteiro contra `android.jar` API 33 | Compila |
-| Build da APK ARM64 (NDK r23 + Gradle `assembleDebug`) | **Passou**, incluindo a ligação dos acessores ao vivo com a tabela VK do mkxp-z |
-| Auditoria da APK | **Passou** (`KERBERUS_APK_AUDIT_OK`), com a mesma separação de runtimes da 6.3 |
-| Teste no aparelho | Pendente: reabrir o Uranium com a 6.3.1 |
-
-APK gerada: artefato `Kerberus-XP-6.3-arm64-debug` da execução acima (retenção de 30 dias). O nome do
-artefato continua o do workflow v20; a versão dentro do app é `6.3.1-pokemon-compatibility`.
-
-```
-sha256  44d9d0f02ca83e56ef3da2f875e06ff00237892e2d6be69241b1eb83aadb5016  Kerberus-XP-6.3-arm64-debug.apk
-```
-
-A APK é assinada com uma chave de debug nova a cada build. Para instalar por cima da 6.3 é preciso
-desinstalar a 6.3 antes, e isso apaga os jogos importados e os saves guardados dentro do app.
-
-### 6.3
-
-Workflow v20 no GitHub Actions, execução 36571734953 (commit `f1e1335`):
-https://github.com/Ninhoplayer6gg/Kerberus-XP/actions/runs/36571734953
-
-| Item | Situação |
-|---|---|
-| Testes de host (Java, Ruby 1.8.7 real, Ruby 3.1, C++ nos dois runtimes, ciclo de vida nativo) | Passaram localmente, a partir de uma extração limpa do ZIP e no job `tests` do CI |
-| Java do app inteiro contra `android.jar` API 33 | Compila |
-| Build da APK ARM64 (NDK r23 + Gradle `assembleDebug`) | **Passou** no job `build` (`BUILD SUCCESSFUL`) |
-| Auditoria da APK | **Passou** (`KERBERUS_APK_AUDIT_OK`): só ABI arm64-v8a; libmkxp-z18 sem `libruby.so`; libmkxp-z31 com `libruby.so`; sem caminhos absolutos do host; libmkxp-z18 contém só o bootstrap Legacy18 (WinBridge) e libmkxp-z31 só o bootstrap moderno (Infinite Fusion) |
-| Teste dos jogos em aparelho | Não executado (sem jogos e sem aparelho). Nenhum jogo passa de "Não testado" |
-
-APK gerada: artefato `Kerberus-XP-6.3-arm64-debug` da execução acima (retenção de 30 dias). O artefato
-contém a APK, o arquivo `.sha256` e o `apk-audit.log`.
-
-```
-sha256  93469ddc40cb4997ddf7d7d1130a45ff3ee3ba5851e81438d8ee521ea55f127d  Kerberus-XP-6.3-arm64-debug.apk
-```
-
-Observação da auditoria: `libc++_shared.so` e `libopenal.so` têm alinhamento de segmento LOAD de 4 KB; as
-demais bibliotecas têm 16 KB. Isso não afeta aparelhos com páginas de 4 KB, mas aparelhos com páginas de
-16 KB exigirão essas duas bibliotecas recompiladas com alinhamento de 16 KB. Esse ponto não foi alterado
-nesta versão.
-
-Para recompilar: Actions → "Kerberus XP 6.3 - Build APK (v20 pokemon compatibility)" → Run workflow. O
-workflow também roda sozinho em push que altere o ZIP ou o próprio workflow nesta branch. O job `tests`
-roda antes; o job `build` só compila a APK se todos os testes passarem. O workflow usa apenas actions
-criadas pelo GitHub (`actions/*`), porque a política do repositório bloqueia actions de terceiros.
