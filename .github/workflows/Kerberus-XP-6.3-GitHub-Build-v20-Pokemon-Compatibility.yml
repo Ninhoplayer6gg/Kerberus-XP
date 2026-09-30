@@ -90,11 +90,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ruby18
-          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-kerberus-${{ env.ONIG_PIN }}-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py', '_kerberus/project/scripts/patch-ruby18-oniguruma.py', '_kerberus/project/scripts/ruby18-oniguruma/*') }}
+          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-kerberus-${{ env.ONIG_PIN }}-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py', '_kerberus/project/scripts/patch-ruby18-oniguruma.py', '_kerberus/project/scripts/ruby18-oniguruma/*', '_kerberus/project/scripts/patch-ruby18-io.py') }}
 
       # Same interpreter as the APK: the RGSS1 (Ruby 1.8.1) superclass rule,
-      # the GC/method-cache tuning with GC statistics, and Oniguruma for the
-      # RGSS1 regex syntax the GNU engine rejects.
+      # the GC/method-cache tuning with GC statistics, Oniguruma for the
+      # RGSS1 regex syntax the GNU engine rejects, and IO#eof? on bionic.
       - name: Build real Ruby 1.8.7 (host, tests only)
         if: steps.ruby18-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -107,6 +107,7 @@ jobs:
           git clone -q --depth 1 --branch "$ONIG_TAG" https://github.com/kkos/oniguruma "$RUNNER_TEMP/oniguruma-src"
           test "$(git -C "$RUNNER_TEMP/oniguruma-src" rev-parse HEAD)" = "$ONIG_PIN"
           python3 "$PROJECT_DIR/scripts/patch-ruby18-oniguruma.py" . "$RUNNER_TEMP/oniguruma-src"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-io.py" .
           autoconf
           printf 'option nodynamic\nstringio\nstrscan\nzlib\n' > ext/Setup
           CFLAGS="-O2 -g -fno-strict-aliasing -std=gnu89 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types" \
@@ -115,6 +116,37 @@ jobs:
           make install > install.log 2>&1
           "$RUNNER_TEMP/ruby18/bin/ruby" -v
           "$RUNNER_TEMP/ruby18/bin/ruby" -e 'p Regexp.kerberus_oniguruma'
+
+      # The APK's Ruby 1.8 source (joiplay, pinned) built for the host with the
+      # stdio configuration of Android: bionic hides FILE, so its config.h has
+      # no FILE_READEND/FILE_READPTR. IO#eof? is tested on it (6.4.3).
+      - name: Cache Ruby 1.8 with Android stdio (tests only)
+        id: ruby18-android-stdio-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ruby18-android-stdio
+          key: ruby18-android-stdio-${{ hashFiles('_kerberus/project/scripts/build-ruby18-android.sh', '_kerberus/project/scripts/patch-ruby18-io.py') }}
+
+      - name: Build Ruby 1.8 with Android stdio (tests only)
+        if: steps.ruby18-android-stdio-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIN="$(sed -n 's/^R18_PIN="\${R18_PIN:-\([0-9a-f]\{40\}\)}"$/\1/p' "$PROJECT_DIR/scripts/build-ruby18-android.sh")"
+          test -n "$PIN"
+          SRC="$RUNNER_TEMP/ruby18-android-stdio-src"
+          git clone -q -b ruby_1_8 https://github.com/joiplay/ruby "$SRC"
+          git -C "$SRC" checkout -q "$PIN"
+          cd "$SRC"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-io.py" .
+          autoconf
+          CFLAGS="-O1 -g -std=gnu89 -fno-strict-aliasing -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-implicit-int" \
+            ./configure --disable-install-doc > configure.log
+          sed -i '/FILE_READEND\|FILE_READPTR\|FILE_COUNT/d' config.h
+          make -j"$(nproc)" miniruby > make.log 2>&1 || { tail -80 make.log; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ruby18-android-stdio"
+          cp miniruby "$RUNNER_TEMP/ruby18-android-stdio/miniruby"
+          "$RUNNER_TEMP/ruby18-android-stdio/miniruby" -e 'exit(IO.kerberus_eof_probe ? 0 : 1)'
 
       - name: Java host tests and source preflight
         shell: bash
@@ -129,6 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           export RUBY18="$RUNNER_TEMP/ruby18/bin/ruby"
+          export RUBY18_ANDROID_STDIO="$RUNNER_TEMP/ruby18-android-stdio/miniruby"
           bash tests/legacy18/run-legacy18-tests.sh | tee "$GITHUB_WORKSPACE/legacy18-tests.log"
           KERBERUS_TEST_WORK="$RUNNER_TEMP/catalog" "$RUBY18" tools/gen-legacy18-catalog.rb --check | tee -a "$GITHUB_WORKSPACE/legacy18-tests.log"
 
@@ -594,9 +627,31 @@ jobs:
           java -version
           ./gradlew --version --no-daemon | tee "$GITHUB_WORKSPACE/gradle-version.log"
 
+      # 6.4.3: fixed signing key from repository secrets (KERBERUS_KEYSTORE_B64,
+      # KERBERUS_KEYSTORE_PASSWORD), so every APK installs over the previous
+      # one. Without the secrets the build still works with a random debug key.
+      - name: Signing key (repository secrets)
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.KERBERUS_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.KERBERUS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ]; then
+            echo "::warning::Segredos KERBERUS_KEYSTORE_B64/KERBERUS_KEYSTORE_PASSWORD ausentes: APK com chave de debug aleatoria (atualizar exige desinstalar)"
+            exit 0
+          fi
+          KS="$RUNNER_TEMP/kerberus-signing.p12"
+          printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > "$KS"
+          keytool -list -keystore "$KS" -storetype PKCS12 -storepass "$KS_PASS" -alias kerberus > /dev/null ||
+            { echo "ERRO: keystore ou senha invalidos (alias kerberus)"; exit 1; }
+          echo "KERBERUS_KEYSTORE=$KS" >> "$GITHUB_ENV"
+
       - name: Build APK
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          KERBERUS_KEYSTORE_PASSWORD: ${{ secrets.KERBERUS_KEYSTORE_PASSWORD }}
         run: |
           set -o pipefail
           set +e
@@ -621,6 +676,15 @@ jobs:
           OUT="$GITHUB_WORKSPACE/Kerberus-XP-6.3-arm64-debug.apk"
           cp -f "$APK" "$OUT"
           sha256sum "$OUT" | tee "$OUT.sha256"
+          # Signing certificate: the same SHA-256 on every build means updates
+          # install over the previous APK.
+          "$ANDROID_HOME/build-tools/33.0.2/apksigner" verify --print-certs "$OUT" | tee "$GITHUB_WORKSPACE/apk-signature.txt"
+          if [ -n "${KERBERUS_KEYSTORE:-}" ]; then
+            echo "Assinatura: chave fixa do Kerberus (segredos do repositorio)" | tee -a "$GITHUB_WORKSPACE/apk-signature.txt"
+          else
+            echo "Assinatura: chave de debug aleatoria deste build (instalar exige desinstalar a anterior)" | tee -a "$GITHUB_WORKSPACE/apk-signature.txt"
+          fi
+          rm -f "$RUNNER_TEMP/kerberus-signing.p12"
 
           READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           AUDIT_DIR="$RUNNER_TEMP/kerberus-apk-audit"
@@ -719,6 +783,7 @@ jobs:
             Kerberus-XP-6.3-arm64-debug.apk
             Kerberus-XP-6.3-arm64-debug.apk.sha256
             apk-audit.log
+            apk-signature.txt
           retention-days: 30
           if-no-files-found: error
 

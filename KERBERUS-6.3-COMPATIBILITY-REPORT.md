@@ -31,12 +31,19 @@
 > evolução e save/load, e numa varredura automática por todos os mapas. Tudo o que apareceu está nos
 > bugs 26 a 34, corrigidos juntos. Isso é teste real do jogo, mas **no PC**: o aparelho ainda precisa
 > confirmar (toque, GPU real, desempenho).
+>
+> **6.4.3.** No aparelho, a 6.4.2 abriu o Uranium, aplicou as variáveis do Windows e os ports e
+> carregou até a section 224, mas a tela de título parou em `undefined method 'unpack' for nil`
+> (`AudioUtilities v17:1010`). O harness do PC não via porque o stdio do Linux é diferente do
+> Android. Causa e correção: bugs 35 e 36; o harness agora roda com um Ruby 1.8 que usa o stdio do
+> Android. Junto: chave de assinatura fixa (sem desinstalar nas próximas versões), backup dos saves do
+> Uranium, turbo 2x/3x, coleta de lixo em momentos ociosos e fonte para texto chinês/japonês/coreano.
 
 ## 1. Estado por jogo
 
 | Jogo | Runtime | Última evidência real | Estado 6.3 | O que a 6.3 muda para ele |
 |---|---|---|---|---|
-| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | Aparelho, 6.4.1: carrega todas as sections e para na tela de título (`ENV["TEMP"]`). PC, motor real, 6.4.2: título, novo jogo, intro, controles, casa, cutscenes, laboratório, inicial, batalha do rival, captura, evolução, save/backup/load e varredura de todos os mapas sem erro, com textura máxima de 4096 | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; bugs 26–34 na 6.4.2; aguarda teste no aparelho | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
+| Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | Aparelho, 6.4.2: variáveis do Windows e ports aplicados, carrega até a section 224 e para na tela de título (`unpack` para nil, bug 35). PC, motor real, 6.4.2: título, novo jogo, intro, controles, casa, cutscenes, laboratório, inicial, batalha do rival, captura, evolução, save/backup/load e varredura de todos os mapas sem erro, com textura máxima de 4096 | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; bugs 26–34 na 6.4.2; bugs 35–36 na 6.4.3 (título confirmado no harness com o stdio do Android); aguarda teste no aparelho | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
 | Pokémon Insurgence | legacy18 | Nenhuma | Não testado | HMode7 e Winsock declarados no carregamento não bloqueiam mais; rede responde com erros Winsock documentados; `GetKeyboardState` do módulo `Keys` 9× mais rápido |
 | Pokémon Xenoverse | legacy18 | Nenhuma | Não testado | Port do Zeus Video Player (OGV nativo), KleinBitmap, MCI mapeado para o áudio nativo |
 | Pokémon Infinite Fusion | modern31 (Ruby 3.1) | Entrava no jogo (6.1.x) | Regressão automatizada OK; aparelho pendente | Nada no comportamento do jogo. Bootstrap moderno byte a byte idêntico (sha256 fixado). No C++ do modern31 entraram só dois registros de diagnóstico (marco BOOT e relatório de exceção). Três proteções independentes na seleção de runtime |
@@ -81,6 +88,8 @@ com o override `.kerberus-runtime`.
 | 31 | F12 fechava o jogo | Port novo `hard_reset` | A section 0 do Uranium relança o executável e chama `exit`; o mkxp-z reinicia as sections no mesmo processo | Só o relançamento sai (evento `RESET`); CRLF e LF | `test_uranium_runtime.rb` |
 | 32 | `Operation not supported for mega surfaces` ao entrar na Comet Cave | Gráficos | O `CustomTilemap` do Essentials v15–v17 (padrão, `MAPVIEWMODE 1`) põe o tileset inteiro num Sprite; tileset maior que a textura da GPU (até 256x21256 no Uranium) não pode ser bitmap de Sprite | Port `mega_tileset`: para esse tileset o tilemap usa o próprio caminho de tiles redimensionados (cópia única por tile para um bitmap 32x32) | `test_uranium_runtime.rb`; varredura de mapas |
 | 33 | Tiles de camadas superiores apagariam os de baixo em mapas com tileset gigante | C++ (legacy18) | Cópia de uma mega surface para a GPU sem mistura de transparência | `blt`/`stretch_blt` de mega surface pelo pipeline normal de mistura e opacidade, por páginas na GPU | varredura de mapas (captura de cada mapa) |
+| 35 | Tela de título do Uranium no aparelho: `NoMethodError: undefined method 'unpack' for nil` em `AudioUtilities v17:1010` (`getOggPage`, 6.4.2) | Ruby 1.8 no Android | O `FILE` do bionic é opaco: o `config.h` do Android não tem `FILE_READEND`/`FILE_READPTR` e o `io.c` usa `!feof(fp)` como "há dados no buffer". Um `seek` apaga a flag de fim, então `eof?` depois de `pos = tamanho` dava `false` e o `read` seguinte, `nil`. No glibc a resposta é exata (o harness não reproduzia) | `scripts/patch-ruby18-io.py`: sem acesso ao buffer, o `eof?` do interpretador lê um byte e devolve com `ungetc`, o caminho que o Ruby 1.8 já usa com o buffer vazio; `IO.kerberus_eof_probe` informa o modo. Ruby 1.8 sem o patch: `84_io_eof.rb` detecta o `eof?` errado e o troca (evento `RUBY18_IO`) | `ruby18_io_eof.rb` num Ruby 1.8 com o stdio do Android (CI) e no normal; `test_io_eof_fallback.rb`; título do Uranium no harness com esse Ruby |
+| 36 | `File.expand_path("~")` sem `HOME` | Ambiente Windows | O Ruby 1.8 do Windows usa `USERPROFILE`; o do Android só `HOME` | `HOME` criado na mesma pasta `.kerberus/profile` quando falta | `test_io_eof_fallback.rb` |
 | 34 | Com textura máxima 4096 (celulares comuns) a tela de título e batalhas com Pokémon animados largos paravam: `Texture dimensions [5600, 80] exceed hardware capabilities` | C++ (legacy18) | O EliteBattle copia a faixa de animação inteira (até 15360x80; 184 sprites passam de 4096 e 66 de 8192) para `Bitmap.new(l, a)`; o mkxp-z só aceitava imagem grande carregada de arquivo | `Bitmap.new` acima do limite fica na RAM, como no RGSS1; cópia, limpeza, pixels, `raw_data=` e clone em software; cópia para a GPU por páginas. Sprite/Plane com esse bitmap continua erro preciso | harness com `maxTextureSize` 4096; `host-compile-check.sh` nos dois motores |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
 
@@ -115,11 +124,32 @@ com o override `.kerberus-runtime`.
   Essentials; teclas que o Windows nunca envia; bitmaps maiores que a GPU no legacy18 (C++);
   `draw_text` sem crash com texto de largura zero; harness de desktop em `tools/game-harness/`.
 
+### 6.4.3
+
+- **Chave de assinatura fixa** (`app/build.gradle`, workflow): com os segredos
+  `KERBERUS_KEYSTORE_B64` e `KERBERUS_KEYSTORE_PASSWORD`, toda APK sai com a mesma chave e instala por
+  cima da anterior. `apk-signature.txt` mostra o SHA-256 do certificado. Sem os segredos, o CI avisa e
+  usa a chave de debug.
+- **Saves**: a busca de saves reconhece os nomes do Uranium e de outros fangames, pastas de saves e as
+  pastas `.kerberus/appdata` e `.kerberus/profile`; o botão Arquivos da biblioteca abre direto
+  Exportar/Restaurar. Backups antigos continuam válidos.
+- **Turbo 2x/3x** (`src/display/kerberus-turbo.h`, botão Turbo da barra do jogo): N atualizações do
+  jogo por quadro desenhado; `Graphics.frame_rate` do jogo inalterado. Medido: 40/80/120 atualizações
+  por segundo no Uranium.
+- **Coleta de lixo em momentos ociosos** (`94_idle_gc.rb`, `GC.kerberus_pressure`): com a tela
+  congelada de uma transição ou com mensagem na tela há 20 quadros, se já passou da metade do caminho
+  até a próxima coleta. Uranium no PC (12 mensagens + caminhada): coletas durante o jogo de 22 (1,21 s)
+  para 12 (0,65 s); total de 22 para 24. O Essentials já chama `GC.start` ao trocar de mapa e ao
+  começar batalhas; o ganho vem das mensagens.
+- **Fonte CJK**: texto com caractere chinês/japonês/coreano que a fonte do jogo não tem usa a
+  WenQuanYi Micro Hei (Apache 2.0) do mkxp-z, empacotada uma vez como asset.
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho e Oniguruma (18 arquivos) | 692 | OK |
+| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho, Oniguruma e IO (20 arquivos) | 725 | OK |
+| `IO#eof?` num Ruby 1.8 com o stdio do Android (sem buffer do `FILE`) | 9 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
 | Linha do `SyntaxError` no relatório de erro (C++) | 8 | OK |
 | Regressão modern31/Infinite Fusion em Ruby 3.1.6 | 7 + sha256 | OK |
@@ -127,9 +157,12 @@ com o override `.kerberus-runtime`.
 | Java: estado de compatibilidade e opções | 14 | OK |
 | Java: SessionLock e controles (existentes) | – | OK |
 | Java: sobras de importação interrompida | 8 | OK |
+| Java: backup e restauração dos saves do Uranium | 11 saves + 15 não-saves | OK |
 | C++: 7 arquivos × 2 runtimes (clang, C++14), incluindo `bitmap.cpp` | 14 | OK |
 | Uranium no motor real (PC, harness de desktop, textura 4096) | jogo do título à evolução + todos os mapas | OK (detalhes na seção 1) |
-| Java do app inteiro contra `android.jar` API 33, alvo Java 8 | 146 classes | OK |
+| Java do app inteiro contra `android.jar` API 33, alvo Java 8 | 58 arquivos (140 classes) | OK |
+| Turbo e GC ocioso no motor real (Uranium no PC) | 1x/2x/3x; 12 mensagens + caminhada | OK (números na seção 3) |
+| Fonte CJK no motor real (coreano, chinês, japonês, negrito) | antes/depois | OK |
 | Sincronia de gerados (header, catálogo, lista de APIs) | 3 | OK |
 
 ## 5. Limitações restantes
@@ -156,11 +189,18 @@ com o override `.kerberus-runtime`.
 - **Roda do mouse** (`InputGetWheelDelta`) ainda depende do `Input.update` nativo.
 - **Coleta de lixo**: o limite de 16 MB faz menos coletas, mas cada uma pode demorar um pouco mais
   (no host, pior pausa de 13,5 para 17,2 ms). O relatório `[PERF]` mostra o efeito real no aparelho.
+  A coleta em momentos ociosos (6.4.3) muda quando a pausa acontece, não o tamanho dela: com mais de
+  um milhão de objetos vivos no Uranium, uma coleta no meio da caminhada continua possível.
+- **Turbo**: a música não acelera (os efeitos sonoros, sim, porque o jogo os dispara mais vezes).
+  Repetição de teclas nos menus fica 2x/3x mais rápida junto com o jogo.
+- **Fonte CJK**: a linha inteira que tem um caractere CJK faltando passa para a fonte reserva (inclusive
+  as letras latinas dessa linha). Outros alfabetos (tailandês, árabe…) não têm reserva.
 - **MIDI**: a APK não traz o fluidsynth; músicas `.mid` ficam em silêncio, sem travar o jogo.
 - **RTP**: jogos clássicos de RMXP que dependem do RTP instalado no Windows não encontram esses
   arquivos; a maioria dos fangames de Pokémon traz tudo na própria pasta.
-- **Assinatura da APK**: cada build do CI usa uma chave de debug nova. Instalar uma build nova por
-  cima da anterior exige desinstalar, o que apaga os jogos importados e os saves guardados no app.
+- **Assinatura da APK**: a 6.4.3 com a chave fixa ainda precisa de uma última desinstalação (as
+  anteriores usavam chave de debug aleatória); daí em diante, as APKs instalam por cima. Sem os
+  segredos no repositório, o CI volta à chave de debug.
 - **HMode7** (mapas 3D do Insurgence): renderizador x86 sem port; a chamada gera erro preciso.
 - **Rede** (recursos online do Insurgence): indisponível; o jogo recebe erros Winsock documentados.
 - **KleinBitmap** `save_pallete`/`modify_pallete`: formato sem documentação pública; erro preciso.
@@ -180,8 +220,10 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Desinstalar a versão anterior (a chave de debug muda a cada build), instalar a APK da 6.4.2,
-   importar o jogo de novo e abrir. Saves do Uranium ficam na pasta do jogo (`Uranium.rxdata`).
+1. Desinstalar a versão anterior uma última vez, instalar a APK da 6.4.3 assinada com a chave fixa
+   (`apk-signature.txt` com o SHA-256 `7E:4C:BE:96:…:C7:CD`), importar o jogo de novo e abrir. Saves do
+   Uranium ficam na pasta do jogo (`Uranium.rxdata`); Arquivos → Exportar backup dos saves guarda uma
+   cópia fora do app.
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.
