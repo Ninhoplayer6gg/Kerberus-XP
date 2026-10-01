@@ -38,6 +38,14 @@
 > Android. Causa e correção: bugs 35 e 36; o harness agora roda com um Ruby 1.8 que usa o stdio do
 > Android. Junto: chave de assinatura fixa (sem desinstalar nas próximas versões), backup dos saves do
 > Uranium, turbo 2x/3x, coleta de lixo em momentos ociosos e fonte para texto chinês/japonês/coreano.
+>
+> **6.5.0.** No aparelho, a 6.4.3 abriu o Uranium e o jogo roda, mas com mini travadas ao andar e um
+> turbo que "trava muito". O harness do PC achou as duas causas das travadas (coleta de lixo do Ruby
+> 1.8 varrendo o código dos scripts; pulo de quadros do RGSS1 sem limite, que deixava a tela sem
+> desenhar por segundos quando o aparelho fica um pouco mais lento que o jogo) e a do turbo (1 quadro
+> desenhado a cada N atualizações mesmo quando o aparelho não aguenta N). Corrigidas com medição na
+> seção 3. Junto: Salvar agora, histórico automático de saves, filtros de imagem, painel de
+> desempenho, controle Bluetooth com mapeamento, vibração, captura de tela e modo debug do Essentials.
 
 ## 1. Estado por jogo
 
@@ -144,6 +152,35 @@ com o override `.kerberus-runtime`.
 - **Fonte CJK**: texto com caractere chinês/japonês/coreano que a fonte do jogo não tem usa a
   WenQuanYi Micro Hei (Apache 2.0) do mkxp-z, empacotada uma vez como asset.
 
+### 6.5.0
+
+Medido no motor legacy18 real (harness do PC, Uranium em Nowtoch City, andando; carga simulada =
+espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda precisa confirmar.
+
+| Medida | 6.4.3 | 6.5.0 |
+|---|---|---|
+| Coletas de lixo andando | 1 a cada ~1,6 s, 55–107 ms | 10 em 32 s, ~11 ms (pior ~27 ms) |
+| Objetos vivos no heap do Ruby | 905 mil (790 mil de código) | ~129 mil |
+| 1x, lógica ~25 ms/quadro: quadros desenhados por s | 0–5 (até 13 s sem desenhar) | 28–31 |
+| 1x, lógica ~35 ms/quadro: quadros/s, maior intervalo | 0 | 19, ~80 ms |
+| Turbo 3x sem carga: velocidade, quadros/s | 2,0–2,3x, 28–33 | 2,2x, ~32 |
+| Turbo 3x, carga média: velocidade, quadros/s, maior intervalo | 1,4x, 19–20, 86–106 ms | 1,3x, 28–30, ~40 ms |
+| Turbo 3x, CPU lenta: quadros/s, maior intervalo | 12–13, 82–130 ms | 28–32, 31–50 ms |
+| Turbo 3x, atualizações/s no PC (Win32API e reflexos) | 93 | 104 |
+
+- **Área de código** (`scripts/patch-ruby18-performance.py`, `gc.c`/`parse.y`/`eval.c`): as árvores de
+  sintaxe das sections ficam fora do heap coletado; literais viram raízes. Mais: alvo de 400 mil
+  vagas livres, varredura em partes, atalhos de Fixnum/String no `eval.c` com guarda de redefinição.
+- **Pulo de quadros limitado** e **turbo adaptativo** (`src/display/graphics.cpp`).
+- **Núcleos rápidos e Performance Hint** no Android (`src/display/kerberus-cpu.h`).
+- **Ports em memória**: `essentials_focus` (pbSameThread) e `essentials_reflections`; cache do
+  `Win32API.new`.
+- **Menu do jogo**: Salvar agora (legacy18, `93_session.rb`), captura, debug, filtro, histórico de
+  saves; canal de pedidos `src/display/kerberus-session.h`; painel em `kerberus-runtime-metrics.h`.
+- **Controle físico**: os botões do controle não chegavam ao jogo (o SDL do Android não dá tecla de
+  teclado para eles); agora mapeados por jogo. **Escala**: Inteiro/Pixel Perfect/Preencher passam a
+  valer no Android (`main.cpp`).
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
@@ -164,6 +201,10 @@ com o override `.kerberus-runtime`.
 | Turbo e GC ocioso no motor real (Uranium no PC) | 1x/2x/3x; 12 mensagens + caminhada | OK (números na seção 3) |
 | Fonte CJK no motor real (coreano, chinês, japonês, negrito) | antes/depois | OK |
 | Sincronia de gerados (header, catálogo, lista de APIs) | 3 | OK |
+| 6.5: Salvar agora (`test_session.rb`) e ports de desempenho (`test_performance_ports.rb`) | 20 + 27 | OK |
+| 6.5: histórico automático de saves (`SaveHistoryHostTest.java`) | rotação de 10, restaurar e desfazer | OK |
+| 6.5: Salvar agora, captura, debug e filtro no motor real (Uranium no PC) | parado/andando/menu; save carregado de novo | OK |
+| 6.5: `graphics.cpp` e `binding-mri.cpp` em modo Android, Ruby 1.8 e 3.1 (clang) | 4 | OK |
 
 ## 5. Limitações restantes
 
@@ -220,10 +261,11 @@ com o override `.kerberus-runtime`.
 
 ## 6. Próximo teste no aparelho
 
-1. Desinstalar a versão anterior uma última vez, instalar a APK da 6.4.3 assinada com a chave fixa
-   (`apk-signature.txt` com o SHA-256 `7E:4C:BE:96:…:C7:CD`), importar o jogo de novo e abrir. Saves do
-   Uranium ficam na pasta do jogo (`Uranium.rxdata`); Arquivos → Exportar backup dos saves guarda uma
-   cópia fora do app.
+1. Instalar a APK da 6.5.0 por cima da 6.4.3 (mesma chave fixa, `apk-signature.txt` com o SHA-256
+   `7E:4C:BE:96:…:C7:CD`); jogos e saves continuam. Saves do Uranium ficam na pasta do jogo
+   (`Uranium.rxdata`); Arquivos → Exportar backup dos saves guarda uma cópia fora do app.
+   Em Performance → Painel detalhado, andar em Nowtoch City em 1x e em turbo 3x e anotar quadros/s,
+   "Jogo", "Pior quadro" e a velocidade mostrada no botão do turbo.
 2. Em **Logs → Mostrar diagnóstico**, copiar o diagnóstico completo. Ele traz o estado de testes,
    o resumo WINTRACE, os eventos `PORT_*`/`WINBRIDGE`, e `RUBY_EXCEPTION` com script, section, linha,
    classe, mensagem e backtrace.
