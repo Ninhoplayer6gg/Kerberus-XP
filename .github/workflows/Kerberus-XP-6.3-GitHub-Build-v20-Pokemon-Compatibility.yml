@@ -770,6 +770,12 @@ jobs:
               echo "[AUDIT][ERRO] libmkxp-z31.so sem o bootstrap moderno (Infinite Fusion)"; exit 1; }
             if LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z31.so"; then
               echo "[AUDIT][ERRO] libmkxp-z31.so contem codigo Legacy18"; exit 1; fi
+            # H-Mode7 (6.6): native MGC_Hmode7.dll only in the legacy18 engine.
+            has_hm7() { python3 -c 'import sys; sys.exit(0 if b"hm7_render\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_hm7 "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o H-Mode7 nativo (MGC_Hmode7.dll)"; exit 1; }
+            if has_hm7 "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o H-Mode7 do legacy18"; exit 1; fi
             echo "[AUDIT] separacao de runtimes: legacy18=WinBridge, modern31=compatibilidade moderna"
 
             echo KERBERUS_APK_AUDIT_OK
