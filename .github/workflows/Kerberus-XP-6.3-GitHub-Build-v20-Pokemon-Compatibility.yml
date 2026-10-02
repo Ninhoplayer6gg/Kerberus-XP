@@ -777,6 +777,32 @@ jobs:
             if has_hm7 "$LIBDIR/libmkxp-z31.so"; then
               echo "[AUDIT][ERRO] libmkxp-z31.so contem o H-Mode7 do legacy18"; exit 1; fi
             echo "[AUDIT] separacao de runtimes: legacy18=WinBridge, modern31=compatibilidade moderna"
+            # zlib (6.6.2): the dynamic linker binds each zlib call of the
+            # engine to the first library in its NEEDED list that defines it.
+            # FreeType's bundled copy in libSDL2_ttf.so (listed before libz.so)
+            # captured inflateInit_ while inflate stayed in the system zlib;
+            # get_deps.sh now builds FreeType with the system zlib. No library
+            # of the APK that libmkxp-z18.so needs may define a zlib function.
+            NM_APK="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+            ZLIB_FUNCS='^(inflate|inflateInit_|inflateInit2_|inflateEnd|inflateReset|inflateReset2|inflateResetKeep|inflateSync|inflateSyncPoint|inflateSetDictionary|deflate|deflateInit_|deflateInit2_|deflateEnd|deflateReset|uncompress|compress|compress2|zlibVersion|zError|crc32|crc32_z|adler32|get_crc_table)$'
+            ZBAD=0
+            while IFS= read -r needed; do
+              so="$LIBDIR/$needed"
+              test -f "$so" || continue
+              "$NM_APK" -D --defined-only "$so" > "$AUDIT_DIR/$needed.dynsym" 2>/dev/null || true
+              hits="$(awk '{print $NF}' "$AUDIT_DIR/$needed.dynsym" | grep -E "$ZLIB_FUNCS" | tr '\n' ' ' || true)"
+              if [ -n "$hits" ]; then
+                echo "[AUDIT][ERRO] $needed (carregada pelo libmkxp-z18.so) define funcoes do zlib: $hits"
+                ZBAD=1
+              fi
+            done < <(sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' "$AUDIT_DIR/mkxp18.dynamic")
+            test "$ZBAD" -eq 0
+            grep -q 'NEEDED.*\[libz\.so' "$AUDIT_DIR/mkxp18.dynamic" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so nao usa o libz.so do sistema"; exit 1; }
+            "$READELF" -d "$LIBDIR/libSDL2_ttf.so" > "$AUDIT_DIR/sdl2ttf.dynamic"
+            grep -q 'NEEDED.*\[libz\.so' "$AUDIT_DIR/sdl2ttf.dynamic" || {
+              echo "[AUDIT][ERRO] libSDL2_ttf.so sem o zlib do sistema (FreeType com zlib proprio?)"; exit 1; }
+            echo "[AUDIT] zlib: so o libz.so do sistema define funcoes do zlib para o libmkxp-z18.so"
 
             echo KERBERUS_APK_AUDIT_OK
           } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"
