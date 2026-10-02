@@ -2,13 +2,10 @@
 # crash reports" with the unstripped library of the same build.
 # Format: <library> <offset> <label>. Return addresses (frames after the
 # faulting one) are given minus 1, as the report itself looks them up.
-# Insurgence 6.6.2, SIGABRT from __vsprintf_chk when starting the story.
-libmkxp-z18.so 0x49bd97 #00 (handler: must be kerberusCrashHandler if the build matches)
-libmkxp-z18.so 0x4abd6f #05 (called sprintf)
-libmkxp-z18.so 0x4aa9c3 #06
-libmkxp-z18.so 0x61ae17 #07
-libmkxp-z18.so 0x606d0f #08
-libmkxp-z18.so 0x617f03 #09
-libmkxp-z18.so 0x61630b #10
-libmkxp-z18.so 0x6153ff #11
-libmkxp-z18.so 0x605eaf #12
+# Offsets only mean something for the build whose build-id the report shows
+# (printed by the same CI step); list them only for that build.
+#
+# Resolved (6.6.2 build-id 192daa03b569c218c026368f045abc1ab1132392):
+# Insurgence SIGABRT at the start of the story = ToneStringify
+# (binding/etc-binding.cpp:184) via rb_call0 -> sprintf past a 50-byte
+# buffer, fixed in 6.6.3.
