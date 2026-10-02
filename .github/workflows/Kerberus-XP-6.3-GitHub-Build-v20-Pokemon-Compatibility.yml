@@ -834,7 +834,8 @@ jobs:
           done
           OFFSETS="$GITHUB_WORKSPACE/crash-offsets.txt"
           if [ -f "$OFFSETS" ]; then
-            grep -v '^#' "$OFFSETS" | while read -r lib offset label; do
+            # A list with comments only is valid (grep then finds no line).
+            { grep -v '^#' "$OFFSETS" || true; } | while read -r lib offset label; do
               test -n "$lib" || continue
               obj="$DIR/$lib"
               test -f "$obj" || { echo "[SYMBOLS] $lib: sem a versao com simbolos"; continue; }
