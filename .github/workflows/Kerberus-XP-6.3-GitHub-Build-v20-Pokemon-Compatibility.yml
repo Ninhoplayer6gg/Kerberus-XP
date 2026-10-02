@@ -673,7 +673,13 @@ jobs:
           APK="$(find app/build/outputs/apk -type f -iname '*debug*.apk' | sort | head -1)"
           test -f "$APK" || { echo "ERRO: APK nao encontrada"; exit 1; }
 
-          OUT="$GITHUB_WORKSPACE/Kerberus-XP-6.3-arm64-debug.apk"
+          # The artifact and the APK carry the app version (versionName without
+          # the suffix), so an older build cannot be taken for the new one.
+          VERSION="$(sed -n 's/^ *versionName "\([0-9.]*\)-.*"$/\1/p' app/build.gradle)"
+          test -n "$VERSION" || { echo "ERRO: versionName nao encontrado"; exit 1; }
+          NAME="Kerberus-XP-$VERSION-arm64-debug"
+          echo "KERBERUS_APK_NAME=$NAME" >> "$GITHUB_ENV"
+          OUT="$GITHUB_WORKSPACE/$NAME.apk"
           cp -f "$APK" "$OUT"
           sha256sum "$OUT" | tee "$OUT.sha256"
           # Signing certificate: the same SHA-256 on every build means updates
@@ -810,10 +816,10 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Kerberus-XP-6.3-arm64-debug
+          name: ${{ env.KERBERUS_APK_NAME }}
           path: |
-            Kerberus-XP-6.3-arm64-debug.apk
-            Kerberus-XP-6.3-arm64-debug.apk.sha256
+            ${{ env.KERBERUS_APK_NAME }}.apk
+            ${{ env.KERBERUS_APK_NAME }}.apk.sha256
             apk-audit.log
             apk-signature.txt
           retention-days: 30
