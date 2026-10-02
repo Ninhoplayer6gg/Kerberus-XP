@@ -813,6 +813,36 @@ jobs:
             echo KERBERUS_APK_AUDIT_OK
           } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"
 
+      # A [CRASH] report (legacy18, 6.6.2) gives library offsets; static
+      # functions have no name in the stripped APK. The unstripped libraries
+      # of this build name them. The build-id identifies the build the report
+      # came from (it must match the APK the phone runs).
+      - name: Native symbols for crash reports
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          APKLIB="$RUNNER_TEMP/kerberus-apk-audit/lib/arm64-v8a"
+          UNSTRIPPED="$(find app/build app/.cxx -type f -path '*obj/local/arm64-v8a/libmkxp-z18.so' 2>/dev/null | head -1 || true)"
+          test -n "$UNSTRIPPED" || { echo "[SYMBOLS][ERRO] libmkxp-z18.so sem simbolos nao encontrada"; exit 1; }
+          DIR="$(dirname "$UNSTRIPPED")"
+          for lib in libmkxp-z18.so libmkxp-z31.so libSDL2.so libSDL2_ttf.so; do
+            test -f "$APKLIB/$lib" || continue
+            id="$("$BIN/llvm-readelf" -n "$APKLIB/$lib" | sed -n 's/.*Build ID: *//p' || true)"
+            echo "[SYMBOLS] $lib build-id=$id sha256=$(sha256sum "$APKLIB/$lib" | cut -c1-16)"
+          done
+          OFFSETS="$GITHUB_WORKSPACE/crash-offsets.txt"
+          if [ -f "$OFFSETS" ]; then
+            grep -v '^#' "$OFFSETS" | while read -r lib offset label; do
+              test -n "$lib" || continue
+              obj="$DIR/$lib"
+              test -f "$obj" || { echo "[SYMBOLS] $lib: sem a versao com simbolos"; continue; }
+              echo "[SYMBOLS] $lib $offset $label"
+              "$BIN/llvm-symbolizer" --obj="$obj" --functions=linkage --demangle --inlining "$offset" | sed 's/^/    /'
+            done
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
