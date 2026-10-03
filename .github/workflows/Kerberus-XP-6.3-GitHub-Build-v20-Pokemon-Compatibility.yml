@@ -676,8 +676,10 @@ jobs:
           "$BIN/llvm-nm" --defined-only -n -C "$UNSTRIPPED" > "$RUNNER_TEMP/kerberus-mkxp18.nm"
           { echo "build-id $ID"
             awk '$2 ~ /^[tTwW]$/ { addr = $1; $1 = ""; $2 = ""; sub(/^ +/, ""); print addr, $0 }' "$RUNNER_TEMP/kerberus-mkxp18.nm"
-          } | gzip -9 > app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz
-          echo "Mapa de simbolos: build-id $ID, $(zcat app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz | wc -l) linhas, $(stat -c %s app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz) bytes"
+          } > app/src/main/assets/kerberus-symbols/libmkxp-z18.txt
+          # Plain text: the APK zip compresses it, and the Android Gradle
+          # plugin would gunzip a .gz asset and drop the suffix.
+          echo "Mapa de simbolos: build-id $ID, $(wc -l < app/src/main/assets/kerberus-symbols/libmkxp-z18.txt) linhas, $(stat -c %s app/src/main/assets/kerberus-symbols/libmkxp-z18.txt) bytes"
           set +e
           ./gradlew assembleDebug --no-daemon --console=plain --stacktrace \
             2>&1 | tee -a "$GITHUB_WORKSPACE/gradle-build.log"
@@ -834,9 +836,9 @@ jobs:
               echo "[AUDIT][ERRO] libSDL2_ttf.so sem o zlib do sistema (FreeType com zlib proprio?)"; exit 1; }
             echo "[AUDIT] zlib: so o libz.so do sistema define funcoes do zlib para o libmkxp-z18.so"
             # 6.6.4: the symbol map in the assets belongs to the libmkxp-z18.so of this APK.
-            unzip -p "$OUT" assets/kerberus-symbols/libmkxp-z18.txt.gz > "$AUDIT_DIR/symbols.txt.gz" || {
-              echo "[AUDIT][ERRO] APK sem assets/kerberus-symbols/libmkxp-z18.txt.gz"; exit 1; }
-            MAP_ID="$(zcat "$AUDIT_DIR/symbols.txt.gz" | head -1 | sed -n 's/^build-id //p' || true)"
+            unzip -p "$OUT" assets/kerberus-symbols/libmkxp-z18.txt > "$AUDIT_DIR/symbols.txt" || {
+              echo "[AUDIT][ERRO] APK sem assets/kerberus-symbols/libmkxp-z18.txt"; exit 1; }
+            MAP_ID="$(sed -n '1s/^build-id //p' "$AUDIT_DIR/symbols.txt")"
             LIB_ID="$("$READELF" -n "$LIBDIR/libmkxp-z18.so" | sed -n 's/.*Build ID: *//p' || true)"
             test -n "$LIB_ID" && test "$MAP_ID" = "$LIB_ID" || {
               echo "[AUDIT][ERRO] mapa de simbolos ($MAP_ID) de outro build que o libmkxp-z18.so do APK ($LIB_ID)"; exit 1; }
