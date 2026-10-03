@@ -434,10 +434,9 @@ jobs:
           echo KERBERUS_RUBY31_OK
 
       # 6.6.4: the checkpoint's prebuilt libopenal.so carried its own exported
-      # copy of libc++ (the NDK toolchain file ignored CMAKE_ANDROID_STL_TYPE)
-      # and 4 KB LOAD alignment. OpenAL Soft 1.23.0 (cloned by get_deps.sh) is
-      # built here with the project's CMake arguments: ANDROID_STL=c++_shared
-      # and 16 KB pages.
+      # copy of libc++ (the NDK toolchain file ignored CMAKE_ANDROID_STL_TYPE).
+      # OpenAL Soft 1.23.0 (cloned by get_deps.sh) is built here with the
+      # project's CMake arguments, which now include ANDROID_STL=c++_shared.
       - name: Build OpenAL Soft from source (shared libc++)
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}/app/jni
