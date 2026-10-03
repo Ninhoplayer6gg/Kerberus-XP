@@ -1,0 +1,11 @@
+# Offsets of a [CRASH] report, symbolized by the CI step "Native symbols for
+# crash reports" with the unstripped library of the same build.
+# Format: <library> <offset> <label>. Return addresses (frames after the
+# faulting one) are given minus 1, as the report itself looks them up.
+# Offsets only mean something for the build whose build-id the report shows
+# (printed by the same CI step); list them only for that build.
+#
+# Resolved (6.6.2 build-id 192daa03b569c218c026368f045abc1ab1132392):
+# Insurgence SIGABRT at the start of the story = ToneStringify
+# (binding/etc-binding.cpp:184) via rb_call0 -> sprintf past a 50-byte
+# buffer, fixed in 6.6.3.

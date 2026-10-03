@@ -1,0 +1,957 @@
+name: Kerberus XP 6.3 - Build APK (v20 pokemon compatibility)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/kerberus-pokemon-compatibility-hqmdf3
+    paths:
+      - Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip
+      - .github/workflows/Kerberus-XP-6.3-GitHub-Build-v20-Pokemon-Compatibility.yml
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ZIP: Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip
+  RUBY18_TAG: v1_8_7_374
+  ONIG_TAG: v6.9.10
+  ONIG_PIN: 4ef89209a239c1aea328cf13c05a2807e5c146d1
+
+jobs:
+  tests:
+    name: Host tests (Java, Ruby 1.8.7 real, Ruby 3.1, C++ both runtimes)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      PROJECT_DIR: ${{ github.workspace }}/_kerberus/project
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract 6.3 checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$SOURCE_ZIP" || { echo "ERRO: coloque $SOURCE_ZIP na raiz do repositorio."; exit 1; }
+          unzip -t "$SOURCE_ZIP" >/dev/null
+          sha256sum "$SOURCE_ZIP"
+          rm -rf "$GITHUB_WORKSPACE/_kerberus"
+          mkdir -p "$GITHUB_WORKSPACE/_kerberus"
+          unzip -q "$SOURCE_ZIP" -d "$GITHUB_WORKSPACE/_kerberus"
+          test -f "$PROJECT_DIR/APK-READY-6.3.txt"
+          test -f "$PROJECT_DIR/KERBERUS-6.3-COMPATIBILITY-REPORT.md"
+
+      - name: Install host tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf bison build-essential clang zlib1g-dev python3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Only GitHub-created actions are used (the repository policy may block
+      # third-party actions). Ruby 3.1 comes from the runner toolcache; if the
+      # image does not ship it, it is built once from the official tarball.
+      - name: Cache Ruby 3.1 fallback (host, tests only)
+        id: ruby31-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ruby31
+          key: ruby31-3.1.6-ubuntu22-v1
+
+      - name: Locate Ruby 3.1 (modern31 regression)
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUBY31="$(ls -d /opt/hostedtoolcache/Ruby/3.1.*/x64/bin/ruby 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -z "$RUBY31" ] && [ -x "$RUNNER_TEMP/ruby31/bin/ruby" ]; then RUBY31="$RUNNER_TEMP/ruby31/bin/ruby"; fi
+          if [ -z "$RUBY31" ]; then
+            cd "$RUNNER_TEMP"
+            wget -q https://cache.ruby-lang.org/pub/ruby/3.1/ruby-3.1.6.tar.gz
+            tar xzf ruby-3.1.6.tar.gz
+            cd ruby-3.1.6
+            ./configure --prefix="$RUNNER_TEMP/ruby31" --disable-install-doc > configure.log
+            make -j"$(nproc)" > make.log 2>&1 || { tail -80 make.log; exit 1; }
+            make install-nodoc > install.log 2>&1 || { tail -80 install.log; exit 1; }
+            RUBY31="$RUNNER_TEMP/ruby31/bin/ruby"
+          fi
+          "$RUBY31" -v
+          echo "RUBY31=$RUBY31" >> "$GITHUB_ENV"
+
+      - name: Cache real Ruby 1.8.7 (host, tests only)
+        id: ruby18-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ruby18
+          key: ruby18-${{ env.RUBY18_TAG }}-ubuntu22-static-kerberus-${{ env.ONIG_PIN }}-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py', '_kerberus/project/scripts/patch-ruby18-oniguruma.py', '_kerberus/project/scripts/ruby18-oniguruma/*', '_kerberus/project/scripts/patch-ruby18-io.py') }}
+
+      # Same interpreter as the APK: the RGSS1 (Ruby 1.8.1) superclass rule,
+      # the GC/method-cache tuning with GC statistics, Oniguruma for the
+      # RGSS1 regex syntax the GNU engine rejects, and IO#eof? on bionic.
+      - name: Build real Ruby 1.8.7 (host, tests only)
+        if: steps.ruby18-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 --branch "$RUBY18_TAG" https://github.com/ruby/ruby "$RUNNER_TEMP/ruby187-src"
+          cd "$RUNNER_TEMP/ruby187-src"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-rgss1.py" eval.c
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-performance.py" .
+          git clone -q --depth 1 --branch "$ONIG_TAG" https://github.com/kkos/oniguruma "$RUNNER_TEMP/oniguruma-src"
+          test "$(git -C "$RUNNER_TEMP/oniguruma-src" rev-parse HEAD)" = "$ONIG_PIN"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-oniguruma.py" . "$RUNNER_TEMP/oniguruma-src"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-io.py" .
+          autoconf
+          printf 'option nodynamic\nstringio\nstrscan\nzlib\n' > ext/Setup
+          CFLAGS="-O2 -g -fno-strict-aliasing -std=gnu89 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types" \
+            ./configure --prefix="$RUNNER_TEMP/ruby18" --disable-install-doc > configure.log
+          make -j"$(nproc)" > make.log 2>&1 || { tail -80 make.log; exit 1; }
+          make install > install.log 2>&1
+          "$RUNNER_TEMP/ruby18/bin/ruby" -v
+          "$RUNNER_TEMP/ruby18/bin/ruby" -e 'p Regexp.kerberus_oniguruma'
+
+      # The APK's Ruby 1.8 source (joiplay, pinned) built for the host with the
+      # stdio configuration of Android: bionic hides FILE, so its config.h has
+      # no FILE_READEND/FILE_READPTR. IO#eof? is tested on it (6.4.3).
+      - name: Cache Ruby 1.8 with Android stdio (tests only)
+        id: ruby18-android-stdio-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ruby18-android-stdio
+          key: ruby18-android-stdio-${{ hashFiles('_kerberus/project/scripts/build-ruby18-android.sh', '_kerberus/project/scripts/patch-ruby18-io.py') }}
+
+      - name: Build Ruby 1.8 with Android stdio (tests only)
+        if: steps.ruby18-android-stdio-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PIN="$(sed -n 's/^R18_PIN="\${R18_PIN:-\([0-9a-f]\{40\}\)}"$/\1/p' "$PROJECT_DIR/scripts/build-ruby18-android.sh")"
+          test -n "$PIN"
+          SRC="$RUNNER_TEMP/ruby18-android-stdio-src"
+          git clone -q -b ruby_1_8 https://github.com/joiplay/ruby "$SRC"
+          git -C "$SRC" checkout -q "$PIN"
+          cd "$SRC"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-io.py" .
+          autoconf
+          CFLAGS="-O1 -g -std=gnu89 -fno-strict-aliasing -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-implicit-int" \
+            ./configure --disable-install-doc > configure.log
+          sed -i '/FILE_READEND\|FILE_READPTR\|FILE_COUNT/d' config.h
+          make -j"$(nproc)" miniruby > make.log 2>&1 || { tail -80 make.log; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ruby18-android-stdio"
+          cp miniruby "$RUNNER_TEMP/ruby18-android-stdio/miniruby"
+          "$RUNNER_TEMP/ruby18-android-stdio/miniruby" -e 'exit(IO.kerberus_eof_probe ? 0 : 1)'
+
+      - name: Java host tests and source preflight
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci-source-preflight.sh | tee "$GITHUB_WORKSPACE/source-preflight.log"
+
+      - name: Legacy18 bootstrap tests on real Ruby 1.8.7
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          export RUBY18="$RUNNER_TEMP/ruby18/bin/ruby"
+          export RUBY18_ANDROID_STDIO="$RUNNER_TEMP/ruby18-android-stdio/miniruby"
+          bash tests/legacy18/run-legacy18-tests.sh | tee "$GITHUB_WORKSPACE/legacy18-tests.log"
+          KERBERUS_TEST_WORK="$RUNNER_TEMP/catalog" "$RUBY18" tools/gen-legacy18-catalog.rb --check | tee -a "$GITHUB_WORKSPACE/legacy18-tests.log"
+
+      - name: Infinite Fusion / modern31 regression on Ruby 3.1
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          bash tests/modern31/run-modern31-tests.sh | tee "$GITHUB_WORKSPACE/modern31-tests.log"
+
+      - name: C++ checks for both engines and native lifecycle test
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          DEPS="$RUNNER_TEMP/deps"
+          mkdir -p "$DEPS"
+          # Header-only sparse clones (root files by default, plus one folder when given).
+          clone() {
+            git clone -q --depth 1 --filter=blob:none --sparse -b "$2" "https://github.com/$1" "$DEPS/$3"
+            if [ -n "${4:-}" ]; then (cd "$DEPS/$3" && git sparse-checkout set "$4"); fi
+          }
+          clone libsdl-org/SDL release-2.26.3 SDL2 include
+          clone icculus/physfs release-3.2.0 physfs src
+          clone libsdl-org/SDL_ttf release-2.20.2 SDL2_ttf
+          clone libsdl-org/SDL_image release-2.6.3 SDL2_image
+          clone icculus/SDL_sound v2.0.1 SDL2_sound src
+          export DEPS
+          export RUBY18="$RUNNER_TEMP/ruby18/bin/ruby"
+          export RUBY18_INCLUDE="$("$RUBY18" -rrbconfig -e 'print Config::CONFIG["archdir"]')"
+          export RUBY18_ARCH_INCLUDE="$RUBY18_INCLUDE"
+          export RUBY31_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyhdrdir"]')"
+          export RUBY31_ARCH_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
+          bash tools/host-compile-check.sh | tee "$GITHUB_WORKSPACE/host-cxx.log"
+          bash tests/native/run-lifecycle-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kerberus-XP-6.3-v20-test-logs
+          path: |
+            source-preflight.log
+            legacy18-tests.log
+            modern31-tests.log
+            host-cxx.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build:
+    name: Build final Kerberus XP 6.3 APK
+    needs: tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      NDK_VERSION: 23.2.8568313
+      ANDROID_API: "23"
+      PROJECT_DIR: ${{ github.workspace }}/_kerberus/project
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract 6.3 checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$SOURCE_ZIP" || { echo "ERRO: coloque $SOURCE_ZIP na raiz do repositorio."; exit 1; }
+          unzip -t "$SOURCE_ZIP" >/dev/null
+          echo "Checkpoint SHA-256:"
+          sha256sum "$SOURCE_ZIP"
+          rm -rf "$GITHUB_WORKSPACE/_kerberus"
+          mkdir -p "$GITHUB_WORKSPACE/_kerberus"
+          unzip -q "$SOURCE_ZIP" -d "$GITHUB_WORKSPACE/_kerberus"
+          test -f "$PROJECT_DIR/APK-READY-6.3.txt"
+          test -f "$PROJECT_DIR/app/build.gradle"
+          test -s "$PROJECT_DIR/app/jni/mkxp-z/binding/kerberus-legacy18-compat.h"
+          grep -q 'KERBERUS_LEGACY18_COMPAT_RUBY' "$PROJECT_DIR/app/jni/mkxp-z/binding/kerberus-legacy18-compat.h"
+          grep -q 'kerberusCompatSource = KERBERUS_LEGACY18_COMPAT_RUBY' "$PROJECT_DIR/app/jni/mkxp-z/binding/binding-mri.cpp"
+          grep -q '@mipmap/ic_launcher_foreground' \
+            "$PROJECT_DIR/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+
+      - name: Host tests and source preflight
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/validate-host.sh scripts/ci-source-preflight.sh scripts/audit-apk.sh
+          bash scripts/ci-source-preflight.sh | tee "$GITHUB_WORKSPACE/source-preflight.log"
+
+      - name: Set up JDK 17 for Android tools
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+
+          SDKMANAGER=""
+          for candidate in \
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager" \
+            "$SDK_ROOT/cmdline-tools/12.0/bin/sdkmanager" \
+            "$SDK_ROOT/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+          test -n "$SDKMANAGER" || { echo "ERRO: sdkmanager nao encontrado"; exit 1; }
+
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses >/dev/null
+          RC=${PIPESTATUS[1]}
+          set -o pipefail
+          test "$RC" -eq 0 || exit "$RC"
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "ndk;${NDK_VERSION}"
+
+          test -x "$SDK_ROOT/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang"
+
+      - name: Install host build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf automake bison build-essential cmake file gawk git gperf \
+            libtool pkg-config python3 ruby unzip wget xxd
+
+      - name: Configure NDK environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "NDK=$NDK" >> "$GITHUB_ENV"
+          echo "ARCH=linux-x86_64" >> "$GITHUB_ENV"
+          echo "$TC/bin" >> "$GITHUB_PATH"
+
+      - name: Validate prebuilt checkpoint native files
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni
+        run: |
+          set -euo pipefail
+          B="$PWD/build-arm64-v8a"
+          for f in \
+            "$B/ruby18/lib/libruby18-static.a" \
+            "$B/ruby18/lib/libruby18-ext.a" \
+            "$B/ruby18/include/ruby.h" \
+            "$B/lib/libopenal.so" \
+            "$B/lib/libpixman-1.a" \
+            "$B/lib/libiconv.a" \
+            "$B/lib/libssl.a" \
+            "$B/lib/libcrypto.a"; do
+            test -s "$f" || { echo "ERRO: prebuilt ausente: $f"; exit 1; }
+          done
+
+          # Do not pipe llvm-nm into grep -q under pipefail. LLVM reports a
+          # broken pipe as EX_IOERR (74) after grep exits early on a match.
+          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          STATIC_NM="$RUNNER_TEMP/kerberus-ruby18-static.nm"
+          EXT_NM="$RUNNER_TEMP/kerberus-ruby18-ext.nm"
+
+          "$NM" "$B/ruby18/lib/libruby18-static.a" > "$STATIC_NM"
+          "$NM" "$B/ruby18/lib/libruby18-ext.a" > "$EXT_NM"
+
+          grep -q ' ruby_init$' "$STATIC_NM" || {
+            echo "ERRO: ruby_init ausente em libruby18-static.a"
+            exit 1
+          }
+
+          for sym in Init_zlib Init_stringio Init_strscan; do
+            grep -q " $sym$" "$EXT_NM" || {
+              echo "ERRO: $sym ausente em libruby18-ext.a"
+              exit 1
+            }
+          done
+
+          echo "Ruby 1.8 core/ext symbols: OK"
+          echo KERBERUS_PREBUILT_CHECKPOINT_OK
+
+      # Ruby 1.8 (legacy18) is compiled here from the pinned joiplay/ruby
+      # ruby_1_8 source, with the Termux builder's patches and flags plus
+      # the RGSS1 superclass rule in eval.c. The checkpoint's prebuilt copy
+      # is the reference: config.h, headers and archive members must match
+      # it exactly, then the fresh build replaces it for the APK.
+      - name: Build Ruby 1.8 (legacy18) from pinned source
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          REF="$RUNNER_TEMP/ruby18-prebuilt-reference"
+          rm -rf "$REF"
+          cp -a app/jni/build-arm64-v8a/ruby18 "$REF"
+          R18_TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64" \
+          R18_SRC="$RUNNER_TEMP/ruby18-src" \
+          R18_OUT="$PWD/app/jni/build-arm64-v8a/ruby18" \
+          R18_REFERENCE="$REF" \
+          HOST_RUBY=ruby \
+            bash scripts/build-ruby18-android.sh 2>&1 | tee "$GITHUB_WORKSPACE/ruby18-build.log"
+          grep -q KERBERUS_RUBY18_BUILD_OK "$GITHUB_WORKSPACE/ruby18-build.log"
+
+      - name: Download JNI source dependencies
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni
+        run: |
+          set -euo pipefail
+          chmod +x get_deps.sh
+          ./get_deps.sh 2>&1 | tee "$GITHUB_WORKSPACE/get-deps.log"
+
+      - name: Build and stage Ruby 3.1 only
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+          unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH SDKROOT 2>/dev/null || true
+
+          mkdir -p .kerberus-termux
+          cat > .kerberus-termux/c-launcher.sh <<'EOF'
+          #!/usr/bin/env bash
+          unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH SDKROOT 2>/dev/null || true
+          exec "$@"
+          EOF
+          cp .kerberus-termux/c-launcher.sh .kerberus-termux/cxx-launcher.sh
+          chmod +x .kerberus-termux/*-launcher.sh
+
+          RUBY_TARGET="$PWD/build-arm64-v8a/lib/libruby.so.3.1.0"
+          HOST=aarch64-linux-android \
+          TARGET=aarch64-linux-android \
+          ABI=arm64-v8a \
+          API=23 \
+          NPROC="$(nproc)" \
+          make -j1 "$RUBY_TARGET" 2>&1 | tee "$GITHUB_WORKSPACE/ruby31-build.log"
+
+          B="$PWD/build-arm64-v8a"
+          test -s "$B/lib/libruby.so.3.1.0" || {
+            echo "ERRO: Ruby 3.1 nao foi gerado"
+            exit 1
+          }
+          ln -sfn libruby.so.3.1.0 "$B/lib/libruby.so.3.1"
+          ln -sfn libruby.so.3.1.0 "$B/lib/libruby.so"
+
+          test -s "$B/include/ruby-3.1.0/ruby.h"
+          test -s "$B/include/ruby-3.1.0/aarch64-linux-android-android/ruby/config.h"
+          test -s "$PWD/ruby/ext/zlib/zlib.o"
+          echo KERBERUS_RUBY31_OK
+
+      # 6.6.4: the checkpoint's prebuilt libopenal.so carried its own exported
+      # copy of libc++ (the NDK toolchain file ignored CMAKE_ANDROID_STL_TYPE).
+      # OpenAL Soft 1.23.0 (cloned by get_deps.sh) is built here with the
+      # project's CMake arguments, which now include ANDROID_STL=c++_shared.
+      - name: Build OpenAL Soft from source (shared libc++)
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+          unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH LIBRARY_PATH SDKROOT 2>/dev/null || true
+          test -x .kerberus-termux/c-launcher.sh
+          rm -rf openal/cmakebuild
+          rm -f build-arm64-v8a/lib/libopenal.so
+          HOST=aarch64-linux-android \
+          TARGET=aarch64-linux-android \
+          ABI=arm64-v8a \
+          API=23 \
+          NPROC="$(nproc)" \
+          make -j1 openal 2>&1 | tee "$GITHUB_WORKSPACE/openal-build.log"
+          LIB="$PWD/build-arm64-v8a/lib/libopenal.so"
+          test -s "$LIB" || { echo "ERRO: libopenal.so nao foi gerada"; exit 1; }
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$READELF" -d "$LIB" | tee "$RUNNER_TEMP/openal.dynamic"
+          grep -q 'SONAME.*\[libopenal\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: SONAME da libopenal.so"; exit 1; }
+          grep -q 'NEEDED.*\[libc++_shared\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: libopenal.so sem a libc++_shared.so"; exit 1; }
+          grep -q 'NEEDED.*\[libOpenSLES\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: libopenal.so sem o backend OpenSL ES"; exit 1; }
+          echo KERBERUS_OPENAL_OK
+
+      - name: Generate mkxp-z embedded assets
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni/mkxp-z
+        run: |
+          set -euo pipefail
+          chmod +x make_xxd.sh
+          ./make_xxd.sh 2>&1 | tee "$GITHUB_WORKSPACE/xxd.log"
+          test -s xxd/assets/icon.png.xxd
+          test -s xxd/shader/simple.frag.xxd
+
+      - name: Patch mkxp-z HTTP binding for Ruby 1.8
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni/mkxp-z
+        run: |
+          set -euo pipefail
+
+          FILE="binding/http-binding.cpp"
+          test -s "$FILE"
+
+          python3 - "$FILE" <<'PY_HTTP18'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text()
+
+          marker = "KERBERUS_RUBY18_HTTP_FALLBACK"
+
+          if marker not in s:
+              anchor = "RB_METHOD(httpGet) {"
+              if anchor not in s:
+                  raise SystemExit("ERRO: ponto de insercao httpGet nao encontrado")
+
+              fallback = '''
+          // KERBERUS_RUBY18_HTTP_FALLBACK
+          // mkxp-z normally defines these worker helpers only for Ruby >= 2.
+          // Ruby 1.8 still calls them synchronously, so provide legacy-only
+          // implementations without changing the Ruby 3.1 path.
+          #if RAPI_MAJOR < 2
+
+          static void* httpGetInternal(void *req) {
+              VALUE ret = Qnil;
+              GUARD_EXC(
+                  mkxp_net::HTTPResponse res =
+                      ((mkxp_net::HTTPRequest*)req)->get();
+                  ret = formResponse(res);
+              );
+              return (void*)ret;
+          }
+
+          typedef struct {
+              mkxp_net::HTTPRequest *req;
+              mkxp_net::StringMap *postData;
+          } httpPostInternalArgs;
+
+          static void* httpPostInternal(void *args) {
+              VALUE ret = Qnil;
+
+              mkxp_net::HTTPRequest *req =
+                  ((httpPostInternalArgs*)args)->req;
+              mkxp_net::StringMap *postData =
+                  ((httpPostInternalArgs*)args)->postData;
+
+              GUARD_EXC(
+                  mkxp_net::HTTPResponse res = req->post(*postData);
+                  ret = formResponse(res);
+              );
+
+              return (void*)ret;
+          }
+
+          typedef struct {
+              mkxp_net::HTTPRequest *req;
+              const char *body;
+              const char *ctype;
+          } httpPostBodyInternalArgs;
+
+          static void* httpPostBodyInternal(void *args) {
+              VALUE ret = Qnil;
+
+              mkxp_net::HTTPRequest *req =
+                  ((httpPostBodyInternalArgs*)args)->req;
+              const char *reqbody =
+                  ((httpPostBodyInternalArgs*)args)->body;
+              const char *reqctype =
+                  ((httpPostBodyInternalArgs*)args)->ctype;
+
+              GUARD_EXC(
+                  mkxp_net::HTTPResponse res =
+                      req->post(reqbody, reqctype);
+                  ret = formResponse(res);
+              );
+
+              return (void*)ret;
+          }
+
+          #endif
+          // KERBERUS_RUBY18_HTTP_FALLBACK_END
+
+          '''
+
+              s = s.replace(anchor, fallback + anchor, 1)
+              p.write_text(s)
+
+          s = p.read_text()
+
+          # mkxp-z already casts the legacy GET worker back to VALUE:
+          #   return (VALUE)httpGetInternal(&req);
+          # Do the same for the two POST workers. Without these casts,
+          # Clang rejects void* -> VALUE in the Ruby 1.8 build.
+          replacements = {
+              "return httpPostInternal(&args);":
+                  "return (VALUE)httpPostInternal(&args);",
+              "return httpPostBodyInternal(&args);":
+                  "return (VALUE)httpPostBodyInternal(&args);",
+          }
+
+          changed = False
+          for old, new in replacements.items():
+              if old in s:
+                  s = s.replace(old, new, 1)
+                  changed = True
+
+          if changed:
+              p.write_text(s)
+              s = p.read_text()
+
+          required = [
+              "KERBERUS_RUBY18_HTTP_FALLBACK",
+              "static void* httpGetInternal",
+              "} httpPostInternalArgs;",
+              "static void* httpPostInternal",
+              "} httpPostBodyInternalArgs;",
+              "static void* httpPostBodyInternal",
+              "return (VALUE)httpGetInternal(&req);",
+              "return (VALUE)httpPostInternal(&args);",
+              "return (VALUE)httpPostBodyInternal(&args);",
+          ]
+          missing = [x for x in required if x not in s]
+          if missing:
+              raise SystemExit(
+                  "ERRO: patch HTTP 1.8 incompleto: " + ", ".join(missing)
+              )
+
+          print("mkxp-z Ruby 1.8 HTTP fallback: OK")
+          PY_HTTP18
+
+          {
+            grep -n -A90 -B5 'KERBERUS_RUBY18_HTTP_FALLBACK' "$FILE"
+            echo
+            echo "--- legacy HTTP return conversions ---"
+            grep -nE 'return \(VALUE\)http(Get|Post|PostBody)Internal' "$FILE"
+          } | tee "$GITHUB_WORKSPACE/http18-patch.log"
+
+      - name: Native preflight before Gradle
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}/app/jni
+        run: |
+          set -euo pipefail
+          B="$PWD/build-arm64-v8a"
+          for f in \
+            "$B/lib/libruby.so" \
+            "$B/lib/libopenal.so" \
+            "$B/lib/libpixman-1.a" \
+            "$B/lib/libiconv.a" \
+            "$B/lib/libssl.a" \
+            "$B/lib/libcrypto.a" \
+            "$B/ruby18/lib/libruby18-static.a" \
+            "$B/ruby18/lib/libruby18-ext.a" \
+            "$PWD/ruby/ext/zlib/zlib.o"; do
+            test -e "$f" || { echo "ERRO: arquivo nativo ausente: $f"; exit 1; }
+          done
+          echo KERBERUS_NATIVE_PREFLIGHT_OK
+
+      - name: Set up JDK 11 for AGP 7.3.1
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Configure Gradle
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          cat > local.properties <<EOF
+          sdk.dir=$ANDROID_HOME
+          ndk.dir=$ANDROID_NDK_HOME
+          EOF
+          chmod +x gradlew
+          grep -q 'gradle-7.4.2-bin.zip' gradle/wrapper/gradle-wrapper.properties
+          java -version
+          ./gradlew --version --no-daemon | tee "$GITHUB_WORKSPACE/gradle-version.log"
+
+      # 6.4.3: fixed signing key from repository secrets (KERBERUS_KEYSTORE_B64,
+      # KERBERUS_KEYSTORE_PASSWORD), so every APK installs over the previous
+      # one. Without the secrets the build still works with a random debug key.
+      - name: Signing key (repository secrets)
+        shell: bash
+        env:
+          KS_B64: ${{ secrets.KERBERUS_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.KERBERUS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ]; then
+            echo "::warning::Segredos KERBERUS_KEYSTORE_B64/KERBERUS_KEYSTORE_PASSWORD ausentes: APK com chave de debug aleatoria (atualizar exige desinstalar)"
+            exit 0
+          fi
+          KS="$RUNNER_TEMP/kerberus-signing.p12"
+          printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > "$KS"
+          keytool -list -keystore "$KS" -storetype PKCS12 -storepass "$KS_PASS" -alias kerberus > /dev/null ||
+            { echo "ERRO: keystore ou senha invalidos (alias kerberus)"; exit 1; }
+          echo "KERBERUS_KEYSTORE=$KS" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          KERBERUS_KEYSTORE_PASSWORD: ${{ secrets.KERBERUS_KEYSTORE_PASSWORD }}
+        run: |
+          set -o pipefail
+          set +e
+          # 6.6.4: native libraries first, so the symbol map of this build's
+          # libmkxp-z18.so goes into the APK's assets (the launcher names the
+          # frames of a [CRASH] report with it, on the phone).
+          ./gradlew externalNativeBuildDebug --no-daemon --console=plain --stacktrace \
+            2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "ERRO: NDK falhou com codigo $RC"
+            tail -n 360 "$GITHUB_WORKSPACE/gradle-build.log" || true
+            exit "$RC"
+          fi
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          UNSTRIPPED="$(find app/build app/.cxx -type f -path '*obj/local/arm64-v8a/libmkxp-z18.so' 2>/dev/null | head -1 || true)"
+          test -n "$UNSTRIPPED" || { echo "ERRO: libmkxp-z18.so com simbolos nao encontrada"; exit 1; }
+          ID="$("$BIN/llvm-readelf" -n "$UNSTRIPPED" | sed -n 's/.*Build ID: *//p' || true)"
+          test -n "$ID" || { echo "ERRO: libmkxp-z18.so sem build-id"; exit 1; }
+          mkdir -p app/src/main/assets/kerberus-symbols
+          "$BIN/llvm-nm" --defined-only -n -C "$UNSTRIPPED" > "$RUNNER_TEMP/kerberus-mkxp18.nm"
+          { echo "build-id $ID"
+            awk '$2 ~ /^[tTwW]$/ { addr = $1; $1 = ""; $2 = ""; sub(/^ +/, ""); print addr, $0 }' "$RUNNER_TEMP/kerberus-mkxp18.nm"
+          } > app/src/main/assets/kerberus-symbols/libmkxp-z18.txt
+          # Plain text: the APK zip compresses it, and the Android Gradle
+          # plugin would gunzip a .gz asset and drop the suffix.
+          echo "Mapa de simbolos: build-id $ID, $(wc -l < app/src/main/assets/kerberus-symbols/libmkxp-z18.txt) linhas, $(stat -c %s app/src/main/assets/kerberus-symbols/libmkxp-z18.txt) bytes"
+          set +e
+          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace \
+            2>&1 | tee -a "$GITHUB_WORKSPACE/gradle-build.log"
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "ERRO: Gradle/NDK falhou com codigo $RC"
+            tail -n 360 "$GITHUB_WORKSPACE/gradle-build.log" || true
+            exit "$RC"
+          fi
+
+      - name: Collect and audit APK
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk -type f -iname '*debug*.apk' | sort | head -1)"
+          test -f "$APK" || { echo "ERRO: APK nao encontrada"; exit 1; }
+
+          # The artifact and the APK carry the app version (versionName without
+          # the suffix), so an older build cannot be taken for the new one.
+          VERSION="$(sed -n 's/^ *versionName "\([0-9.]*\)-.*"$/\1/p' app/build.gradle)"
+          test -n "$VERSION" || { echo "ERRO: versionName nao encontrado"; exit 1; }
+          NAME="Kerberus-XP-$VERSION-arm64-debug"
+          echo "KERBERUS_APK_NAME=$NAME" >> "$GITHUB_ENV"
+          OUT="$GITHUB_WORKSPACE/$NAME.apk"
+          cp -f "$APK" "$OUT"
+          sha256sum "$OUT" | tee "$OUT.sha256"
+          # Signing certificate: the same SHA-256 on every build means updates
+          # install over the previous APK.
+          "$ANDROID_HOME/build-tools/33.0.2/apksigner" verify --print-certs "$OUT" | tee "$GITHUB_WORKSPACE/apk-signature.txt"
+          if [ -n "${KERBERUS_KEYSTORE:-}" ]; then
+            echo "Assinatura: chave fixa do Kerberus (segredos do repositorio)" | tee -a "$GITHUB_WORKSPACE/apk-signature.txt"
+          else
+            echo "Assinatura: chave de debug aleatoria deste build (instalar exige desinstalar a anterior)" | tee -a "$GITHUB_WORKSPACE/apk-signature.txt"
+          fi
+          rm -f "$RUNNER_TEMP/kerberus-signing.p12"
+
+          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          AUDIT_DIR="$RUNNER_TEMP/kerberus-apk-audit"
+          rm -rf "$AUDIT_DIR"
+          mkdir -p "$AUDIT_DIR"
+          unzip -qq "$OUT" 'lib/*/*.so' -d "$AUDIT_DIR"
+
+          {
+            LIBDIR="$AUDIT_DIR/lib/arm64-v8a"
+
+            BAD_ABI="$(find "$AUDIT_DIR/lib" -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -print 2>/dev/null || true)"
+            if [ -n "$BAD_ABI" ]; then
+              echo "[AUDIT][ERRO] ABI inesperada:"
+              echo "$BAD_ABI"
+              exit 1
+            fi
+
+            for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so libc++_shared.so; do
+              test -s "$LIBDIR/$lib" || {
+                echo "[AUDIT][ERRO] $lib ausente"
+                exit 1
+              }
+            done
+
+            "$READELF" -d "$LIBDIR/libmkxp-z18.so" > "$AUDIT_DIR/mkxp18.dynamic"
+            "$READELF" -d "$LIBDIR/libmkxp-z31.so" > "$AUDIT_DIR/mkxp31.dynamic"
+
+            if grep -q 'NEEDED.*libruby\.so' "$AUDIT_DIR/mkxp18.dynamic"; then
+              echo "[AUDIT][ERRO] mkxp-z18 depende indevidamente de libruby.so"
+              exit 1
+            fi
+
+            grep -q 'NEEDED.*libruby\.so' "$AUDIT_DIR/mkxp31.dynamic" || {
+              echo "[AUDIT][ERRO] mkxp-z31 nao referencia libruby.so"
+              exit 1
+            }
+
+            BAD=0
+            while IFS= read -r so; do
+              dyn="$AUDIT_DIR/$(basename "$so").dynamic"
+              "$READELF" -d "$so" > "$dyn" 2>/dev/null || true
+              if grep -E 'NEEDED.*(/data/data/com\.termux|/data/user/[0-9]+/com\.termux|/home/runner/)' "$dyn" >/dev/null; then
+                echo "[AUDIT][ERRO] dependencia absoluta do host em: $so"
+                BAD=1
+              fi
+            done < <(find "$LIBDIR" -type f -name '*.so' -print | sort)
+            test "$BAD" -eq 0
+
+            echo "[AUDIT] ELF LOAD alignment:"
+            while IFS= read -r so; do
+              ph="$AUDIT_DIR/$(basename "$so").phdr"
+              "$READELF" -lW "$so" > "$ph" 2>/dev/null || true
+              align="$(awk '$1=="LOAD" {print $NF}' "$ph" | sort -u | tr '\n' ',' | sed 's/,$//')"
+              echo "  $(basename "$so"): ${align:-unknown}"
+            done < <(find "$LIBDIR" -type f -name '*.so' -print | sort)
+
+            # Kerberus 6.3: each engine embeds only its own compatibility layer.
+            # The eval.c patch reads the hook global through a C string (NUL
+            # terminated); the bootstrap text only contains "... = HOOK".
+            has_rgss1_rule() { python3 -c 'import sys; sys.exit(0 if b"$__kerberus_rgss1_class_override\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_rgss1_rule "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o Ruby 1.8 com a regra RGSS1 (eval.c)"; exit 1; }
+            if has_rgss1_rule "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o patch do Ruby 1.8"; exit 1; fi
+            has_perf_patch() { python3 -c 'import sys; sys.exit(0 if b"KERBERUS_GC_MALLOC_LIMIT\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_perf_patch "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o patch de desempenho do Ruby 1.8 (gc.c)"; exit 1; }
+            # Oniguruma (6.4.1): Regexp.kerberus_oniguruma is a C string of re.c.
+            has_onig() { python3 -c 'import sys; sys.exit(0 if b"kerberus_oniguruma\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_onig "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o Oniguruma do Ruby 1.8 (regex do RGSS1)"; exit 1; }
+            if has_onig "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o Oniguruma do Ruby 1.8"; exit 1; fi
+            unzip -l "$OUT" > "$AUDIT_DIR/apk-files.txt"
+            grep -q 'assets/licenses/oniguruma-COPYING.txt' "$AUDIT_DIR/apk-files.txt" || {
+              echo "[AUDIT][ERRO] APK sem a licenca do Oniguruma (assets/licenses)"; exit 1; }
+            echo "[AUDIT] Ruby 1.8 com a regra de superclasse do RGSS1 (eval.c), o patch de desempenho (gc.c) e o Oniguruma (regex do RGSS1)"
+            LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o bootstrap Legacy18 (WinBridge)"; exit 1; }
+            if LC_ALL=C grep -a -q 'Kerberus Shared Compatibility' "$LIBDIR/libmkxp-z18.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z18.so contem o bootstrap Ruby 3"; exit 1; fi
+            LC_ALL=C grep -a -q 'Kerberus Shared Compatibility' "$LIBDIR/libmkxp-z31.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z31.so sem o bootstrap moderno (Infinite Fusion)"; exit 1; }
+            if LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem codigo Legacy18"; exit 1; fi
+            # H-Mode7 (6.6): native MGC_Hmode7.dll only in the legacy18 engine.
+            has_hm7() { python3 -c 'import sys; sys.exit(0 if b"hm7_render\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
+            has_hm7 "$LIBDIR/libmkxp-z18.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so sem o H-Mode7 nativo (MGC_Hmode7.dll)"; exit 1; }
+            if has_hm7 "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o H-Mode7 do legacy18"; exit 1; fi
+            echo "[AUDIT] separacao de runtimes: legacy18=WinBridge, modern31=compatibilidade moderna"
+            # zlib (6.6.2): the dynamic linker binds each zlib call of the
+            # engine to the first library in its NEEDED list that defines it.
+            # FreeType's bundled copy in libSDL2_ttf.so (listed before libz.so)
+            # captured inflateInit_ while inflate stayed in the system zlib;
+            # get_deps.sh now builds FreeType with the system zlib. No library
+            # of the APK that libmkxp-z18.so needs may define a zlib function.
+            NM_APK="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+            ZLIB_FUNCS='^(inflate|inflateInit_|inflateInit2_|inflateEnd|inflateReset|inflateReset2|inflateResetKeep|inflateSync|inflateSyncPoint|inflateSetDictionary|deflate|deflateInit_|deflateInit2_|deflateEnd|deflateReset|uncompress|compress|compress2|zlibVersion|zError|crc32|crc32_z|adler32|get_crc_table)$'
+            ZBAD=0
+            while IFS= read -r needed; do
+              so="$LIBDIR/$needed"
+              test -f "$so" || continue
+              "$NM_APK" -D --defined-only "$so" > "$AUDIT_DIR/$needed.dynsym" 2>/dev/null || true
+              hits="$(awk '{print $NF}' "$AUDIT_DIR/$needed.dynsym" | grep -E "$ZLIB_FUNCS" | tr '\n' ' ' || true)"
+              if [ -n "$hits" ]; then
+                echo "[AUDIT][ERRO] $needed (carregada pelo libmkxp-z18.so) define funcoes do zlib: $hits"
+                ZBAD=1
+              fi
+            done < <(sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' "$AUDIT_DIR/mkxp18.dynamic")
+            test "$ZBAD" -eq 0
+            grep -q 'NEEDED.*\[libz\.so' "$AUDIT_DIR/mkxp18.dynamic" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so nao usa o libz.so do sistema"; exit 1; }
+            "$READELF" -d "$LIBDIR/libSDL2_ttf.so" > "$AUDIT_DIR/sdl2ttf.dynamic"
+            grep -q 'NEEDED.*\[libz\.so' "$AUDIT_DIR/sdl2ttf.dynamic" || {
+              echo "[AUDIT][ERRO] libSDL2_ttf.so sem o zlib do sistema (FreeType com zlib proprio?)"; exit 1; }
+            echo "[AUDIT] zlib: so o libz.so do sistema define funcoes do zlib para o libmkxp-z18.so"
+            # 6.6.4: the symbol map in the assets belongs to the libmkxp-z18.so of this APK.
+            unzip -p "$OUT" assets/kerberus-symbols/libmkxp-z18.txt > "$AUDIT_DIR/symbols.txt" || {
+              echo "[AUDIT][ERRO] APK sem assets/kerberus-symbols/libmkxp-z18.txt"; exit 1; }
+            MAP_ID="$(sed -n '1s/^build-id //p' "$AUDIT_DIR/symbols.txt")"
+            LIB_ID="$("$READELF" -n "$LIBDIR/libmkxp-z18.so" | sed -n 's/.*Build ID: *//p' || true)"
+            test -n "$LIB_ID" && test "$MAP_ID" = "$LIB_ID" || {
+              echo "[AUDIT][ERRO] mapa de simbolos ($MAP_ID) de outro build que o libmkxp-z18.so do APK ($LIB_ID)"; exit 1; }
+            echo "[AUDIT] mapa de simbolos do libmkxp-z18.so no APK (build-id $LIB_ID)"
+            # 6.6.4: which library each imported symbol binds to on the phone,
+            # in the order MainActivity.getLibraries loads them (bionic: first
+            # library of the load's breadth-first DT_NEEDED group). SOMBRA is
+            # the 6.6.2 class: an APK library defines a system library's
+            # function and comes first. The first report of the real APK had
+            # no SOMBRA, AUSENTE or SEM_DEFINICAO: those fail the build now
+            # (--strict). DUPLICADO stays informational.
+            python3 scripts/audit-symbol-binding.py "$LIBDIR" \
+              "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API" \
+              --java app/src/main/java/com/hatkid/mkxpz/MainActivity.java --strict
+            # That report also showed the prebuilt libopenal.so with its own
+            # exported copy of libc++, bound by the engines before
+            # libc++_shared.so (165 DUPLICADO); OpenAL is now built from source
+            # (step "Build OpenAL Soft from source").
+            "$READELF" -d "$LIBDIR/libopenal.so" | grep -q 'NEEDED.*\[libc++_shared\.so' || {
+              echo "[AUDIT][ERRO] libopenal.so sem a libc++_shared.so (copia propria da libc++)"; exit 1; }
+            echo "[AUDIT] libopenal.so usa a libc++_shared.so"
+
+            echo KERBERUS_APK_AUDIT_OK
+          } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"
+
+      # A [CRASH] report (legacy18, 6.6.2) gives library offsets; static
+      # functions have no name in the stripped APK. The unstripped libraries
+      # of this build name them. The build-id identifies the build the report
+      # came from (it must match the APK the phone runs).
+      - name: Native symbols for crash reports
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          APKLIB="$RUNNER_TEMP/kerberus-apk-audit/lib/arm64-v8a"
+          UNSTRIPPED="$(find app/build app/.cxx -type f -path '*obj/local/arm64-v8a/libmkxp-z18.so' 2>/dev/null | head -1 || true)"
+          test -n "$UNSTRIPPED" || { echo "[SYMBOLS][ERRO] libmkxp-z18.so sem simbolos nao encontrada"; exit 1; }
+          DIR="$(dirname "$UNSTRIPPED")"
+          for lib in libmkxp-z18.so libmkxp-z31.so libSDL2.so libSDL2_ttf.so; do
+            test -f "$APKLIB/$lib" || continue
+            id="$("$BIN/llvm-readelf" -n "$APKLIB/$lib" | sed -n 's/.*Build ID: *//p' || true)"
+            echo "[SYMBOLS] $lib build-id=$id sha256=$(sha256sum "$APKLIB/$lib" | cut -c1-16)"
+          done
+          OFFSETS="$GITHUB_WORKSPACE/crash-offsets.txt"
+          if [ -f "$OFFSETS" ]; then
+            # A list with comments only is valid (grep then finds no line).
+            { grep -v '^#' "$OFFSETS" || true; } | while read -r lib offset label; do
+              test -n "$lib" || continue
+              obj="$DIR/$lib"
+              test -f "$obj" || { echo "[SYMBOLS] $lib: sem a versao com simbolos"; continue; }
+              echo "[SYMBOLS] $lib $offset $label"
+              "$BIN/llvm-symbolizer" --obj="$obj" --functions=linkage --demangle --inlining "$offset" | sed 's/^/    /'
+            done
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERBERUS_APK_NAME }}
+          path: |
+            ${{ env.KERBERUS_APK_NAME }}.apk
+            ${{ env.KERBERUS_APK_NAME }}.apk.sha256
+            apk-audit.log
+            apk-signature.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kerberus-XP-6.3-v20-failure-logs
+          path: |
+            source-preflight.log
+            get-deps.log
+            ruby18-build.log
+            ruby31-build.log
+            openal-build.log
+            xxd.log
+            http18-patch.log
+            gradle-version.log
+            gradle-build.log
+            apk-audit.log
+          if-no-files-found: ignore
+          retention-days: 14
