@@ -655,8 +655,32 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace \
+          # 6.6.4: native libraries first, so the symbol map of this build's
+          # libmkxp-z18.so goes into the APK's assets (the launcher names the
+          # frames of a [CRASH] report with it, on the phone).
+          ./gradlew externalNativeBuildDebug --no-daemon --console=plain --stacktrace \
             2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "ERRO: NDK falhou com codigo $RC"
+            tail -n 360 "$GITHUB_WORKSPACE/gradle-build.log" || true
+            exit "$RC"
+          fi
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          UNSTRIPPED="$(find app/build app/.cxx -type f -path '*obj/local/arm64-v8a/libmkxp-z18.so' 2>/dev/null | head -1 || true)"
+          test -n "$UNSTRIPPED" || { echo "ERRO: libmkxp-z18.so com simbolos nao encontrada"; exit 1; }
+          ID="$("$BIN/llvm-readelf" -n "$UNSTRIPPED" | sed -n 's/.*Build ID: *//p' || true)"
+          test -n "$ID" || { echo "ERRO: libmkxp-z18.so sem build-id"; exit 1; }
+          mkdir -p app/src/main/assets/kerberus-symbols
+          "$BIN/llvm-nm" --defined-only -n -C "$UNSTRIPPED" > "$RUNNER_TEMP/kerberus-mkxp18.nm"
+          { echo "build-id $ID"
+            awk '$2 ~ /^[tTwW]$/ { addr = $1; $1 = ""; $2 = ""; sub(/^ +/, ""); print addr, $0 }' "$RUNNER_TEMP/kerberus-mkxp18.nm"
+          } | gzip -9 > app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz
+          echo "Mapa de simbolos: build-id $ID, $(zcat app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz | wc -l) linhas, $(stat -c %s app/src/main/assets/kerberus-symbols/libmkxp-z18.txt.gz) bytes"
+          set +e
+          ./gradlew assembleDebug --no-daemon --console=plain --stacktrace \
+            2>&1 | tee -a "$GITHUB_WORKSPACE/gradle-build.log"
           RC=${PIPESTATUS[0]}
           set -e
           if [ "$RC" -ne 0 ]; then
@@ -809,6 +833,23 @@ jobs:
             grep -q 'NEEDED.*\[libz\.so' "$AUDIT_DIR/sdl2ttf.dynamic" || {
               echo "[AUDIT][ERRO] libSDL2_ttf.so sem o zlib do sistema (FreeType com zlib proprio?)"; exit 1; }
             echo "[AUDIT] zlib: so o libz.so do sistema define funcoes do zlib para o libmkxp-z18.so"
+            # 6.6.4: the symbol map in the assets belongs to the libmkxp-z18.so of this APK.
+            unzip -p "$OUT" assets/kerberus-symbols/libmkxp-z18.txt.gz > "$AUDIT_DIR/symbols.txt.gz" || {
+              echo "[AUDIT][ERRO] APK sem assets/kerberus-symbols/libmkxp-z18.txt.gz"; exit 1; }
+            MAP_ID="$(zcat "$AUDIT_DIR/symbols.txt.gz" | head -1 | sed -n 's/^build-id //p' || true)"
+            LIB_ID="$("$READELF" -n "$LIBDIR/libmkxp-z18.so" | sed -n 's/.*Build ID: *//p' || true)"
+            test -n "$LIB_ID" && test "$MAP_ID" = "$LIB_ID" || {
+              echo "[AUDIT][ERRO] mapa de simbolos ($MAP_ID) de outro build que o libmkxp-z18.so do APK ($LIB_ID)"; exit 1; }
+            echo "[AUDIT] mapa de simbolos do libmkxp-z18.so no APK (build-id $LIB_ID)"
+            # 6.6.4: which library each imported symbol binds to on the phone,
+            # in the order MainActivity.getLibraries loads them (bionic: first
+            # library of the load's breadth-first DT_NEEDED group). SOMBRA is
+            # the 6.6.2 class: an APK library defines a system library's
+            # function and comes first. Informational until the first report
+            # of the real APK is reviewed.
+            python3 scripts/audit-symbol-binding.py "$LIBDIR" \
+              "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API" \
+              --java app/src/main/java/com/hatkid/mkxpz/MainActivity.java
 
             echo KERBERUS_APK_AUDIT_OK
           } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"
