@@ -847,11 +847,18 @@ jobs:
             # in the order MainActivity.getLibraries loads them (bionic: first
             # library of the load's breadth-first DT_NEEDED group). SOMBRA is
             # the 6.6.2 class: an APK library defines a system library's
-            # function and comes first. Informational until the first report
-            # of the real APK is reviewed.
+            # function and comes first. The first report of the real APK had
+            # no SOMBRA, AUSENTE or SEM_DEFINICAO: those fail the build now
+            # (--strict). DUPLICADO stays informational.
             python3 scripts/audit-symbol-binding.py "$LIBDIR" \
               "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API" \
-              --java app/src/main/java/com/hatkid/mkxpz/MainActivity.java
+              --java app/src/main/java/com/hatkid/mkxpz/MainActivity.java --strict
+            # That report also showed libopenal.so with its own exported copy
+            # of libc++ (the NDK toolchain file ignored CMAKE_ANDROID_STL_TYPE),
+            # bound by the engines before libc++_shared.so: 165 DUPLICADO.
+            "$READELF" -d "$LIBDIR/libopenal.so" | grep -q 'NEEDED.*\[libc++_shared\.so' || {
+              echo "[AUDIT][ERRO] libopenal.so sem a libc++_shared.so (copia propria da libc++)"; exit 1; }
+            echo "[AUDIT] libopenal.so usa a libc++_shared.so"
 
             echo KERBERUS_APK_AUDIT_OK
           } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"
