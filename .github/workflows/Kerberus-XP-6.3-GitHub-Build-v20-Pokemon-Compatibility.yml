@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - claude/kerberus-pokemon-compatibility-hqmdf3
+      - ccr-20f09d07-k195ut
     paths:
       - Kerberus-XP-6.3-Pokemon-Compatibility-Checkpoint.zip
       - .github/workflows/Kerberus-XP-6.3-GitHub-Build-v20-Pokemon-Compatibility.yml
@@ -197,6 +198,14 @@ jobs:
           export RUBY31_ARCH_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
           bash tools/host-compile-check.sh | tee "$GITHUB_WORKSPACE/host-cxx.log"
           bash tests/native/run-lifecycle-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
+          # 6.7: MIDI. FluidLite from the commit get_deps.sh pins, built on the
+          # host like fluidlite.mk, loaded by the engine's fluid-fun.cpp and
+          # sharedmidistate.h with the APK's TimGM6mb.sf2.
+          FLUIDLITE_COMMIT="$(sed -n 's/^FLUIDLITE_COMMIT=//p' app/jni/get_deps.sh)"
+          mkdir -p "$DEPS/fluidlite"
+          (cd "$DEPS/fluidlite" && git init -q && git fetch -q --depth 1 https://github.com/divideconcept/FluidLite "$FLUIDLITE_COMMIT" \
+            && git -c advice.detachedHead=false checkout -q FETCH_HEAD)
+          FLUIDLITE_SRC="$DEPS/fluidlite" bash tests/native/run-fluidlite-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
 
       - name: Upload test logs
         if: always()
@@ -764,7 +773,7 @@ jobs:
               exit 1
             fi
 
-            for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so libc++_shared.so; do
+            for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so libc++_shared.so libfluidlite.so; do
               test -s "$LIBDIR/$lib" || {
                 echo "[AUDIT][ERRO] $lib ausente"
                 exit 1
@@ -890,6 +899,34 @@ jobs:
             "$READELF" -d "$LIBDIR/libopenal.so" | grep -q 'NEEDED.*\[libc++_shared\.so' || {
               echo "[AUDIT][ERRO] libopenal.so sem a libc++_shared.so (copia propria da libc++)"; exit 1; }
             echo "[AUDIT] libopenal.so usa a libc++_shared.so"
+            # 6.7: MIDI. Both engines dlopen libfluidlite.so (FluidLite, LGPL,
+            # its own library) and resolve these names (fluid-fun.h); FluidLite
+            # is C and must not carry a C++ runtime of its own.
+            "$NM_APK" -D --defined-only "$LIBDIR/libfluidlite.so" | awk '{print $NF}' > "$AUDIT_DIR/fluidlite.exports"
+            for name in fluid_settings_setnum fluid_settings_setint fluid_settings_setstr fluid_synth_sfload \
+                fluid_synth_system_reset fluid_synth_write_s16 fluid_synth_noteon fluid_synth_noteoff \
+                fluid_synth_channel_pressure fluid_synth_pitch_bend fluid_synth_cc fluid_synth_program_change \
+                new_fluid_settings new_fluid_synth delete_fluid_settings delete_fluid_synth; do
+              grep -qx "$name" "$AUDIT_DIR/fluidlite.exports" || {
+                echo "[AUDIT][ERRO] libfluidlite.so nao exporta $name"; exit 1; }
+            done
+            if "$READELF" -d "$LIBDIR/libfluidlite.so" | grep -q 'NEEDED.*c++'; then
+              echo "[AUDIT][ERRO] libfluidlite.so depende de uma libc++"; exit 1; fi
+            for name in libmkxp-z18.so libmkxp-z31.so; do
+              LC_ALL=C grep -a -q 'libfluidlite.so' "$LIBDIR/$name" || {
+                echo "[AUDIT][ERRO] $name sem o carregador do FluidLite (fluid-fun.cpp)"; exit 1; }
+            done
+            for f in assets/kerberus/midi/TimGM6mb.sf2 assets/licenses/fluidlite-LICENSE.txt assets/licenses/TimGM6mb-COPYING.txt; do
+              grep -q "$f" "$AUDIT_DIR/apk-files.txt" || { echo "[AUDIT][ERRO] APK sem $f"; exit 1; }
+            done
+            SF2_SHA="$(unzip -p "$OUT" assets/kerberus/midi/TimGM6mb.sf2 | sha256sum | cut -d' ' -f1)"
+            test "$SF2_SHA" = c5378b62028c920cb11e4803327983fee2f2cdff5dc89c708e39da417e51c854 || {
+              echo "[AUDIT][ERRO] TimGM6mb.sf2 do APK diferente do conferido ($SF2_SHA)"; exit 1; }
+            # dlopen of libfluidlite.so alone, as SDL_LoadObject does (its own group).
+            python3 scripts/audit-symbol-binding.py "$LIBDIR" \
+              "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API" \
+              --load fluidlite --strict
+            echo "[AUDIT] MIDI: libfluidlite.so com a API do mkxp-z, TimGM6mb.sf2 conferido e licencas no APK"
 
             echo KERBERUS_APK_AUDIT_OK
           } 2>&1 | tee "$GITHUB_WORKSPACE/apk-audit.log"

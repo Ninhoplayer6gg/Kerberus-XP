@@ -46,13 +46,40 @@
 > desenhado a cada N atualizações mesmo quando o aparelho não aguenta N). Corrigidas com medição na
 > seção 3. Junto: Salvar agora, histórico automático de saves, filtros de imagem, painel de
 > desempenho, controle Bluetooth com mapeamento, vibração, captura de tela e modo debug do Essentials.
+>
+> **6.6.1.** No aparelho, a 6.6.0 abriu o Pokémon Insurgence e parou no boot com
+> `Zlib::DataError: invalid distance too far back` ao descompactar `Data/Constants.rxdata`. Os mesmos
+> dados descompactam no PC e num emulador arm64 com o zlib do Android; a causa no aparelho não foi
+> reproduzida fora dele. Correção e diagnóstico: bug 37; junto, dois defeitos latentes do legacy18
+> achados na investigação (bugs 38 e 39).
+>
+> **6.6.2.** Com a 6.6.1 o Insurgence passou do boot no aparelho, e o bloco `[ZLIB_INFLATE]` mostrou a
+> causa do bug 37: a `libSDL2_ttf.so` exportava funções da cópia do zlib embutida no FreeType. O jogo
+> fechou ao começar a história sem deixar log (bug 40): a 6.6.2 registra crash nativo e o motivo da
+> saída do processo.
+>
+> **6.6.3.** A 6.6.2 confirmou o zlib no aparelho e o relatório `[CRASH]` mostrou o fechamento: o
+> `Tone#to_s` do motor legacy18 passava do buffer e o FORTIFY do Android encerrava o jogo (bug 41).
+>
+> **6.6.4.** A 6.6.3 levou o Insurgence até a história no aparelho. A 6.6.4 acelera o ciclo de cada
+> jogo. O diagnóstico começa por um resumo, e um botão copia só o essencial. O `[CRASH]` já sai com o
+> nome das funções no celular. O harness do PC ganha AddressSanitizer, e o CI mostra qual biblioteca
+> cada função importada usa no Android. Essa auditoria achou na primeira APK um defeito latente: duas
+> cópias da libc++ no mesmo processo (bug 42).
+>
+> **6.7.0.** Música MIDI e RTP, as duas falhas da lista de limitações que barravam os jogos clássicos
+> de RPG Maker XP. MIDI: FluidLite (LGPL) compilado do código oficial e o soundfont TimGM6mb (GPL-2)
+> no APK, com a opção de usar o seu; um defeito que deixaria reverb e chorus sempre ligados no FluidLite
+> foi achado e corrigido antes de chegar ao aparelho (bug 43). RTP: o usuário importa a pasta ou o ZIP
+> do RTP e o Kerberus liga cada jogo ao RTP pelo `Game.ini`. Jogos sem MIDI (a maioria dos fangames
+> de Pokémon) não carregam o sintetizador no boot. Testado no PC; o aparelho ainda precisa confirmar.
 
 ## 1. Estado por jogo
 
 | Jogo | Runtime | Última evidência real | Estado 6.3 | O que a 6.3 muda para ele |
 |---|---|---|---|---|
 | Pokémon Uranium | legacy18 (Ruby 1.8.7 real) | Aparelho, 6.4.2: variáveis do Windows e ports aplicados, carrega até a section 224 e para na tela de título (`unpack` para nil, bug 35). PC, motor real, 6.4.2: título, novo jogo, intro, controles, casa, cutscenes, laboratório, inicial, batalha do rival, captura, evolução, save/backup/load e varredura de todos os mapas sem erro, com textura máxima de 4096 | Controles corrigidos na 6.3.1; regra de superclasse do RGSS1 no interpretador desde a 6.3.3; regex do RGSS1 (Oniguruma) na 6.4.1; bugs 26–34 na 6.4.2; bugs 35–36 na 6.4.3 (título confirmado no harness com o stdio do Android); aguarda teste no aparelho | APIs opcionais declaradas não derrubam mais o boot; nomes com sufixo `A`; 307 providers em vez de 62; ports `rgss_linker`/`fmodex_audio` preservados e completados (volume das opções, fade-in real); `klein_bitmap`, `gif_dll`, `text_entry` (teclado Android), `bitmap_memory`; correção genérica do `LargePlane`; caminhos estilo Windows |
-| Pokémon Insurgence | legacy18 | Nenhuma | Não testado | HMode7 e Winsock declarados no carregamento não bloqueiam mais; rede responde com erros Winsock documentados; `GetKeyboardState` do módulo `Keys` 9× mais rápido |
+| Pokémon Insurgence | legacy18 | Aparelho, 6.6.2: zlib correto (`[ZLIB] ... ok`), tela de título; ao começar a história, SIGABRT do FORTIFY em `Tone#to_s` (bug 41, corrigido na 6.6.3) | Motor real: 798/832 mapas, batalhas (captura, Mega, Armored, Delta), evolução, salvar/carregar, créditos | H-Mode7 (mapas 3D) nativo e idêntico à DLL; recursos online indisponíveis (erro de rede como no Windows sem conexão); história completa do começo ao fim não jogada |
 | Pokémon Xenoverse | legacy18 | Nenhuma | Não testado | Port do Zeus Video Player (OGV nativo), KleinBitmap, MCI mapeado para o áudio nativo |
 | Pokémon Infinite Fusion | modern31 (Ruby 3.1) | Entrava no jogo (6.1.x) | Regressão automatizada OK; aparelho pendente | Nada no comportamento do jogo. Bootstrap moderno byte a byte idêntico (sha256 fixado). No C++ do modern31 entraram só dois registros de diagnóstico (marco BOOT e relatório de exceção). Três proteções independentes na seleção de runtime |
 
@@ -100,6 +127,13 @@ com o override `.kerberus-runtime`.
 | 36 | `File.expand_path("~")` sem `HOME` | Ambiente Windows | O Ruby 1.8 do Windows usa `USERPROFILE`; o do Android só `HOME` | `HOME` criado na mesma pasta `.kerberus/profile` quando falta | `test_io_eof_fallback.rb` |
 | 34 | Com textura máxima 4096 (celulares comuns) a tela de título e batalhas com Pokémon animados largos paravam: `Texture dimensions [5600, 80] exceed hardware capabilities` | C++ (legacy18) | O EliteBattle copia a faixa de animação inteira (até 15360x80; 184 sprites passam de 4096 e 66 de 8192) para `Bitmap.new(l, a)`; o mkxp-z só aceitava imagem grande carregada de arquivo | `Bitmap.new` acima do limite fica na RAM, como no RGSS1; cópia, limpeza, pixels, `raw_data=` e clone em software; cópia para a GPU por páginas. Sprite/Plane com esse bitmap continua erro preciso | harness com `maxTextureSize` 4096; `host-compile-check.sh` nos dois motores |
 | 17 | O erro aparecia como `Script '' line ection199` e o backtrace como `:ection199:302` | Diagnóstico | O parser de mensagem do mkxp-z espera quadros com dois `:` (formato do Ruby 1.9+). No Ruby 1.8 o código de topo de uma section gera `Section199:302`; o parser escrevia `\0` e depois `:` sobre a primeira letra da string do backtrace | No legacy18, o quadro é lido de uma cópia: arquivo antes do último `:`, linha depois; o modern31 fica idêntico | checagem C++ dos dois runtimes; pré-processador do modern31 idêntico |
+| 37 | Insurgence no aparelho (6.6.0): `Script 'PokemonSystem' line 131: Zlib::DataError (invalid distance too far back)` no boot | zlib / bibliotecas do APK | A `libSDL2_ttf.so` exporta `inflateInit_`, `zlibVersion`, `zError`, `crc32_z`, `get_crc_table` e outras da cópia do zlib 1.2.12 embutida no FreeType (compilada com `Z_SOLO`). O motor carrega essa biblioteca antes do `libz.so`, então o `inflateInit_` vinha da cópia e o `inflate` do zlib do sistema: duas implementações no mesmo fluxo. Confirmado pelo log da 6.6.1 (entrada com o CRC certo; `inflateInit` do C com `Z_STREAM_ERROR`, o retorno do `Z_SOLO`) e compilando o mesmo `ftgzip.c` | 6.6.1: depois de um `Zlib::DataError`, inflate em C numa chamada só, entregue só com o Adler-32 conferido (proteção mantida). 6.6.2: FreeType com o zlib do sistema (`FT_CONFIG_OPTION_SYSTEM_ZLIB`, `scripts/patch-sdl-ttf-system-zlib.py` no `get_deps.sh`); auditoria do APK proíbe funções do zlib nas bibliotecas que o motor carrega; linha `[ZLIB]` no boot | `test_zlib_guard.rb` (29), `zlib_inflate_test.cpp` (28), auditoria testada com a biblioteca antiga e a corrigida |
+| 38 | (latente) `load_data` podia entregar ao `Marshal` um buffer só parcialmente lido | Filesystem | `fileIntRead` do legacy18 ignorava o retorno de `SDL_RWread` | Lê até completar; leitura do arquivo inteiro que ainda falte vira `IOError` "leitura incompleta"; leitura com tamanho pedido devolve o que foi lido | checagem C++ dos dois runtimes |
+| 39 | (latente) Variáveis da função que inicia o Ruby e roda os scripts não eram vistas pelo coletor de lixo do Ruby 1.8 | Ruby 1.8 | O legacy18 chamava `ruby_init()` sem `RUBY_INIT_STACK`; a base da pilha do coletor virava uma variável de dentro do `ruby_init` | `RUBY_INIT_STACK` antes do `ruby_init()`, como no motor moderno | checagem C++; boot do Insurgence no harness |
+| 40 | Insurgence no aparelho (6.6.1): o jogo fechou ao começar a história e voltou ao Kerberus, sem nenhuma linha no log | Diagnóstico | Nenhum registro de crash nativo nem do motivo com que o Android encerra o processo | Bloco `[CRASH]` no legacy18 (sinal, endereço, thread, backtrace, linha Ruby, memória; o sinal segue para o tratamento anterior) e linha `[SAIDA]` no launcher com o motivo do Android 11+ (`LOW_MEMORY`, `CRASH_NATIVE`…). A causa em si ainda depende do próximo log | `crash_report_test.cpp` (15, x86 e arm64), `RuntimeExitHostTest` (15), SIGSEGV real no harness |
+| 41 | Insurgence no aparelho (6.6.2): `[CRASH] sinal 6 (SIGABRT)` vindo de `__vsprintf_chk` ao começar a história | C++ (legacy18) / FORTIFY | `Color`, `Tone` e `Rect#to_s`/`inspect` escreviam `"(%f, %f, %f, %f)"` num `char[50]`; `Tone.new(-255,-255,-255,255)` precisa de 52 bytes. O bionic confere `sprintf` com o tamanho do buffer e aborta; o glibc, em C++ com clang, não confere, e o harness não via. Endereços simbolizados no CI: `ToneStringify` (`etc-binding.cpp:184`) chamado por `rb_call0` | Buffer de 128 com `snprintf`, mesmo texto do RGSS. Harness com `_FORTIFY_SOURCE=2` e a conferência do bionic para `sprintf`/`snprintf` em C++ (`tools/game-harness/fortify-bionic.h`); build-id no `[CRASH]` | `etc_stringify_test.rb` (12; aborta com o código antigo), reprodução e correção no harness |
+| 42 | (latente) O motor usava duas cópias da libc++ ao mesmo tempo | Bibliotecas do APK | A `libopenal.so` levava uma cópia própria da libc++ e a exportava. O Makefile das dependências pedia `CMAKE_ANDROID_STL_TYPE=c++_shared`, mas o toolchain do NDK lê `ANDROID_STL` (padrão `c++_static`). Como vem antes da `libc++_shared.so` na ordem de busca, o `libmkxp-z18.so` e o `libmkxp-z31.so` ligavam parte das funções da libc++ (strings, streams, exceções) a essa cópia e o resto à `libc++_shared.so`. Achado pela auditoria de ligação de símbolos na primeira APK real (165 DUPLICADO; nenhuma SOMBRA) | A `libopenal.so` era uma cópia pré-compilada guardada no projeto, que o CI nunca recompilava. O CI passa a compilar a OpenAL Soft 1.23.0 do código-fonte com `-DANDROID_STL=c++_shared`. Sobra 1 DUPLICADO inofensivo (`__emutls_get_address`, auxiliar do compilador, na `libruby.so` e na `libc++_shared.so`). A auditoria da APK confere que a `libopenal.so` usa a `libc++_shared.so` e reprova SOMBRA, AUSENTE e SEM_DEFINICAO | `symbol_binding_test.sh` (16); auditoria da APK |
+| 43 | (latente, achado antes do aparelho) Com o FluidLite, reverb e chorus ficariam sempre ligados, qualquer que fosse `midiReverb`/`midiChorus` | MIDI | O mkxp-z grava `synth.reverb.active` e `synth.chorus.active` com `settings_setint` (API do FluidSynth 2.x). O FluidLite segue a API 1.x: registra essas opções como texto (`"yes"`/`"no"`), recusa o inteiro e fica no padrão `"yes"`. A opção do jogo e a do Kerberus não teriam efeito | `kerberusMidiFlag` (`src/audio/kerberus-midi.h`) grava o inteiro e o texto; a chamada do tipo errado falha sem efeito, nas duas bibliotecas | `fluidlite_midi_test.cpp`: só `setint` deixa `"yes"` e o som muda; o `SharedMidiState` corrigido soa igual a efeitos desligados |
 
 ## 3. Implementado
 
@@ -181,11 +215,121 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
   teclado para eles); agora mapeados por jogo. **Escala**: Inteiro/Pixel Perfect/Preencher passam a
   valer no Android (`main.cpp`).
 
+### 6.6.0
+
+- **H-Mode7 nativo** (`binding/kerberus/hm7-core.h`, `hm7-native.h`): as 8 funções do `MGC_Hmode7.dll`
+  reescritas e conferidas byte a byte contra a DLL original num emulador x86, em casos gerados e em
+  dados reais do Insurgence (preparação do mapa 689 e quadros da introdução). O quadro é desenhado em
+  até 4 núcleos, com o mesmo resultado de 1 núcleo.
+- Ports em memória `hm7_surface` (poses dos personagens copiadas na CPU) e `hm7_rows` (cor de fade
+  aplicada também na cópia da CPU). Sem eles, a GPU era lida a cada quadro.
+- Ferramenta local `tools/hm7-reference` (emulador da DLL; a DLL nunca entra no repositório).
+- Achados da varredura de mapas do Insurgence no motor real:
+  - **Segunda batalha fechava o jogo** (Essentials com a transição do SpriteResizer, que abre
+    `ENV["TEMP"] + "\tempscreen.bmp"`): a nova tentativa com o caminho relativo só acontecia na
+    primeira vez. Agora acontece sempre; o cache de caminhos é recarregado uma vez por arquivo.
+  - **Créditos em GPUs de 4096**: `draw_text` em bitmap maior que a textura máxima (software, mesma
+    fórmula do shader) e Sprite desse bitmap pelas páginas de GPU. Comparado no harness com o
+    caminho normal da GPU.
+  - **Teclado do Android na tela de nome**: o port `text_entry` não era aplicado (scripts com CRLF).
+  - **Enter/Apagar do teclado do Android**: tecla apertada e solta entre dois quadros conta como
+    apertada até o fim do quadro seguinte (só legacy18).
+  - **Compilação**: includes dos headers do Kerberus como no NDK; `tools/check-native-includes.py`
+    no preflight e a checagem de C++ do PC com os diretórios do NDK.
+  - **Erros de rede** (port `winsock_errno`): o script Sockets do Essentials converte o código
+    Winsock em `Errno` com a numeração do Ruby do Windows; sem rede o jogo recebe
+    `Errno::ENETDOWN` em vez de `TypeError`.
+- Insurgence no motor real (harness, textura 4096): 798 de 832 mapas sem erro por teleporte; os 34
+  restantes dependem do progresso da história ou do servidor online e falham igual no Windows.
+  Captura com apelido, Mega Evolução, Armored, Delta, evolução, salvar e carregar conferidos;
+  batalhas de líder (Orion), Taen e Campeão (Reukra) sem erro do motor.
+
+### 6.6.1
+
+- **Zlib no aparelho** (bug 37): `86_zlib.rb` envolve `Zlib::Inflate.inflate`; depois de um
+  `Zlib::DataError`, os bytes são descompactados de novo em C (`KerberusNative.inflate`,
+  `binding/kerberus/zlib-inflate.h`) em pedaços de 1024 bytes e numa chamada só. Só a chamada
+  única, terminada com o Adler-32 conferido pelo zlib, é entregue ao jogo; senão o erro original
+  continua. O bloco `[ZLIB_INFLATE]` do log traz o necessário para fechar a causa (CRC-32 da
+  entrada, versão do zlib do aparelho, resultado de cada tentativa).
+- **Leitura completa no `load_data`** (bug 38) e **base da pilha do coletor do Ruby 1.8** (bug 39).
+- Referência do `Data/Constants.rxdata` da cópia testada: 22619 bytes, CRC-32 `7980f5c0`;
+  PBTypes 273 `e9493363`, PBAbilities 2026 `3ca3b77d`, PBMoves 5518 `29514d56`, PBItems 6000
+  `a914e047`, PBSpecies 6428 `d7eafd8b`, PBTrainers 2235 `06205795` (tamanho comprimido, CRC-32).
+
+### 6.6.2
+
+- **Causa do bug 37**: FreeType do SDL2_ttf com o zlib do sistema; a `libSDL2_ttf.so` não exporta
+  mais funções do zlib, e o CI reprova o APK se alguma biblioteca carregada pelo motor exportar.
+  Linha `[ZLIB]` no boot do legacy18 com o zlib em uso e um inflate em partes (C e Ruby).
+- **Relatório de crash** (bug 40): `binding/kerberus/crash-report.h` no legacy18 e
+  `RuntimeExit`/`RuntimeReport.describeExit` no launcher.
+- Harness: novo jogo no Insurgence até o mapa 689 (introdução em H-Mode7); memória de ~260 MB para
+  ~570 MB nesse momento.
+
+### 6.6.3
+
+- **Bug 41**: `Color`/`Tone`/`Rect#to_s` do legacy18 com buffer de 128 e `snprintf`.
+- Harness compilado como o ndk-build (`-D_FORTIFY_SOURCE=2`) e com a conferência de `sprintf`/
+  `snprintf` do bionic em C++; o `Tone#to_s` antigo aborta no PC como no celular.
+- `[CRASH]` com o build-id do `libmkxp-z18.so`; passo do CI que simboliza `crash-offsets.txt`; APK e
+  artefato com a versão no nome.
+
+### 6.6.4
+
+- **Resumo no topo do diagnóstico** (`ReportSummary.java`): `LEGACY18_READY`, `[ZLIB]`, seções
+  carregadas, último `[CRASH]`, `[SAIDA]`, último `[RUBY_EXCEPTION]`/`[Mensagem]`,
+  `WINBRIDGE_UNAVAILABLE` e `[ZLIB_INFLATE]`. As linhas `[Script]` seguidas aparecem agrupadas.
+- **"Copiar resumo para enviar"**: copia o resumo e as 60 últimas linhas do relatório.
+- **Símbolos no celular**: o CI grava `assets/kerberus-symbols/libmkxp-z18.txt` com os símbolos
+  do mesmo build (compila primeiro as bibliotecas, depois a APK). O launcher dá nome aos frames do
+  `libmkxp-z18.so` de um `[CRASH]` quando o build-id confere. A auditoria da APK confere que o mapa
+  é do `libmkxp-z18.so` da APK.
+- **Harness com AddressSanitizer** (`SANITIZE=address`): leitura ou escrita fora de buffer no
+  mkxp-z/Kerberus para o jogo no PC, com o lugar exato. Até este build, sob ASan:
+  Insurgence com 493 de 832 mapas visitados e Uranium com os 198 mapas, sem nenhum relatório do ASan.
+- **Ligação de símbolos no Android** (`scripts/audit-symbol-binding.py`, passo de auditoria do CI):
+  para cada função importada que mais de uma biblioteca define, mostra qual o linker do Android
+  escolhe. Segue a ordem de `MainActivity.getLibraries` e as bibliotecas do sistema da API 23 do NDK.
+  Na primeira APK real: nenhuma SOMBRA, AUSENTE ou SEM_DEFINICAO, que agora reprovam o build. Os
+  165 DUPLICADO eram a libc++ embutida na OpenAL (bug 42, corrigido).
+
+### 6.7.0
+
+- **Música MIDI** (os dois motores): o carregador do mkxp-z (`fluid-fun.cpp`) procurava no Android
+  uma `libfluidsynth.so.3` que não existe, e o MIDI ficava desligado. Agora carrega a
+  `libfluidlite.so`: FluidLite 1.2.2 (LGPL-2.1), commit fixado `4a01cf1`, compilado pelo `ndk-build`
+  (`app/jni/fluidlite.mk`) como biblioteca própria, com SF2 e SF3. O caminho absoluto vem do launcher
+  (`KERBERUS_FLUID_LIB`).
+- **Soundfont**: TimGM6mb.sf2 (GPL-2, 5,7 MB) no APK, conferido por sha256 no preflight e na auditoria
+  da APK. O FluidLite abre o soundfont por caminho, então o launcher o copia uma vez para `files/midi`
+  (cópia atômica, refeita se o arquivo estiver incompleto). Configurações → **Música MIDI**: soundfont
+  padrão ou um seu (.sf2/.sf3), reverb e chorus (ligados por padrão, como o MIDI do Windows). Medido no
+  PC (12 vozes, melhor de 5): o reverb soma cerca de 30% à CPU do sintetizador e o chorus mais 7%,
+  cerca de 0,7% de um núcleo ao todo; dá para desligar num celular lento. Um soundfont do `mkxp.json`
+  do jogo continua tendo prioridade.
+- **Sintetizador só quando o jogo tem MIDI**: no RGSS1/2 o mkxp-z cria dois sintetizadores ao abrir o
+  jogo e cada um carrega o soundfont inteiro. O launcher procura `.mid` em `Audio/` e vê se o jogo usa
+  um RTP instalado (`KERBERUS_MIDI_PRELOAD`). Sem MIDI, nada é carregado no boot; uma música MIDI que
+  apareça depois cria o sintetizador na hora, como no RGSS3.
+- **RTP**: Configurações → **RTP · jogos clássicos** importa a pasta do RTP (copiada do PC:
+  `Common Files\Enterbrain\RGSS\Standard`) ou um ZIP dela. O Kerberus acha a pasta que tem
+  `Graphics` e `Audio` (também dentro de `RGSS/Standard/`) e instala em `files/rtp/<Nome>` numa
+  transação: um RTP com o mesmo nome só é trocado quando o novo está completo. Os jogos são ligados
+  pelo `Game.ini` (`RTP1`–`RTP3` no XP, `RTP` no VX/VX Ace), sem diferenciar maiúsculas. O motor monta
+  os RTPs depois da pasta do jogo (`KERBERUS_RTP_PATHS`), como o RGSS: um arquivo do jogo vence o do
+  RTP. Nenhum RTP vem com o Kerberus.
+- **Diagnóstico**: linhas `[BOOT] RTP: ...` (instalado/faltando) e `[BOOT] MIDI: ...` no início de
+  cada jogo; `[MIDI]` do motor (biblioteca carregada, soundfont, reverb/chorus e falhas). O resumo do
+  diagnóstico mostra um RTP faltando e um MIDI que ficou mudo.
+- As variáveis do launcher para o motor são sempre definidas (vazias quando não há valor), para um jogo
+  não herdar o RTP ou o soundfont de outro no mesmo processo.
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
 |---|---|---|
-| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho, Oniguruma e IO (20 arquivos) | 725 | OK |
+| Legacy18 em Ruby 1.8.7 real com os patches RGSS1, de desempenho, Oniguruma e IO (24 arquivos) | 832 | OK |
 | `IO#eof?` num Ruby 1.8 com o stdio do Android (sem buffer do `FILE`) | 9 | OK |
 | Ciclo de vida nativo (extensão Ruby 1.8 + headers reais) | 7 | OK (e falha com o header antigo) |
 | Linha do `SyntaxError` no relatório de erro (C++) | 8 | OK |
@@ -195,7 +339,8 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 | Java: SessionLock e controles (existentes) | – | OK |
 | Java: sobras de importação interrompida | 8 | OK |
 | Java: backup e restauração dos saves do Uranium | 11 saves + 15 não-saves | OK |
-| C++: 7 arquivos × 2 runtimes (clang, C++14), incluindo `bitmap.cpp` | 14 | OK |
+| C++: 16 arquivos × 2 runtimes (clang, C++14, diretórios de include do NDK), incluindo `filesystem-binding.cpp`, `bitmap.cpp`, `sprite.cpp`, `eventthread.cpp`, `input.cpp`, `graphics.cpp` e, na 6.7.0, `config.cpp`, `sharedstate.cpp`, `fluid-fun.cpp`, `alstream.cpp` | 32 | OK |
+| Includes dos headers nativos do Kerberus contra os diretórios do NDK (`check-native-includes.py`) | 17 | OK (e falha com o include que quebrou o APK) |
 | Uranium no motor real (PC, harness de desktop, textura 4096) | jogo do título à evolução + todos os mapas | OK (detalhes na seção 1) |
 | Java do app inteiro contra `android.jar` API 33, alvo Java 8 | 58 arquivos (140 classes) | OK |
 | Turbo e GC ocioso no motor real (Uranium no PC) | 1x/2x/3x; 12 mensagens + caminhada | OK (números na seção 3) |
@@ -205,6 +350,24 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 | 6.5: histórico automático de saves (`SaveHistoryHostTest.java`) | rotação de 10, restaurar e desfazer | OK |
 | 6.5: Salvar agora, captura, debug e filtro no motor real (Uranium no PC) | parado/andando/menu; save carregado de novo | OK |
 | 6.5: `graphics.cpp` e `binding-mri.cpp` em modo Android, Ruby 1.8 e 3.1 (clang) | 4 | OK |
+| 6.6.1: proteção do `Zlib::Inflate.inflate` (`test_zlib_guard.rb`) | 24 | OK |
+| 6.6.1: inflate em C em pedaços e em chamada única (`zlib_inflate_test.cpp`) | 28 | OK |
+| 6.6.1: Insurgence no motor real: 6 blocos do `Constants.rxdata` iguais na extensão e no C; falha do aparelho simulada | 6 + 1 | OK |
+| 6.6.2: relatório de crash nativo (`crash_report_test.cpp`; SIGSEGV e SIGABRT reais, x86 e arm64) | 15 | OK |
+| 6.6.2: motivo da saída do processo (`RuntimeExitHostTest.java`) | 15 | OK |
+| 6.6.2: auditoria de símbolos do zlib (biblioteca antiga reprova, corrigida passa) | 2 | OK |
+| 6.6.2: motor real (harness): linha `[ZLIB]` no boot, novo jogo até o mapa 689, SIGSEGV na thread do Ruby gera `[CRASH]` | 3 | OK |
+| 6.6.3: `Color`/`Tone`/`Rect#to_s` com FORTIFY (`etc_stringify_test.rb`; o código antigo aborta) | 12 | OK |
+| 6.6.3: harness com FORTIFY: `Tone#to_s` antigo aborta, corrigido devolve o texto; novo jogo até o mapa 79; créditos | 4 | OK |
+| 6.6.4: resumo do diagnóstico e nomes do `[CRASH]` pelo mapa de símbolos (`ReportSummaryHostTest.java`; outro build ou sem mapa: sem nomes) | 18 | OK |
+| 6.6.4: ligação de símbolos no Android (`symbol_binding_test.sh`; o caso do zlib da 6.6.2 aparece como SOMBRA e reprova no modo estrito) | 16 | OK |
+| 6.6.4: motor real com AddressSanitizer (Insurgence e Uranium, varredura de mapas) | Uranium: 198 de 198 mapas; Insurgence: 493 de 832 (varredura em andamento) | OK (sem relatório do ASan) |
+| 6.7.0: MIDI de ponta a ponta no host (`fluidlite_midi_test.cpp`): carregador do motor, `SharedMidiState`, TimGM6mb, defeito do reverb/chorus reproduzido e corrigido pelo som, bateria, soundfont inválido, variáveis do launcher, biblioteca ausente | 47 | OK |
+| 6.7.0: `libfluidlite.so` do host, mesma lista de fontes e headers do `fluidlite.mk`, exporta as 16 funções do mkxp-z | 16 | OK |
+| 6.7.0: RTP (`RtpLibraryHostTest.java`): nomes do `Game.ini`, ZIP com `RGSS/Standard`, pasta no topo, troca transacional, ZIP inválido, path traversal, dois RTPs, sobras de instalação | 38 | OK |
+| 6.7.0: soundfont, opções e pré-carga (`MidiSupportHostTest.java`) | 33 | OK |
+| 6.7.0: resumo com RTP faltando e MIDI mudo (`ReportSummaryHostTest.java`) | 2 | OK |
+| 6.7.0: classes Android novas (`MidiSettings`, `RtpSettings`) com stubs da API usada, alvo Java 8, `-Xlint:all` (o `android.jar` não pôde ser baixado neste ambiente; o Gradle do CI compila o app inteiro) | 9 arquivos | OK |
 
 ## 5. Limitações restantes
 
@@ -236,14 +399,23 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
   Repetição de teclas nos menus fica 2x/3x mais rápida junto com o jogo.
 - **Fonte CJK**: a linha inteira que tem um caractere CJK faltando passa para a fonte reserva (inclusive
   as letras latinas dessa linha). Outros alfabetos (tailandês, árabe…) não têm reserva.
-- **MIDI**: a APK não traz o fluidsynth; músicas `.mid` ficam em silêncio, sem travar o jogo.
-- **RTP**: jogos clássicos de RMXP que dependem do RTP instalado no Windows não encontram esses
-  arquivos; a maioria dos fangames de Pokémon traz tudo na própria pasta.
+- **MIDI** (6.7.0): toca com o FluidLite e o TimGM6mb, que soam diferente do sintetizador do Windows
+  (Microsoft GS Wavetable/DirectMusic). Para um som mais próximo, importe outro soundfont em
+  Configurações → Música MIDI. Síntese, efeitos e bateria foram testados no PC, com a biblioteca
+  compilada do mesmo código; a primeira música MIDI no aparelho ainda precisa ser ouvida. O ganho
+  1.0 do mkxp-z foi mantido: num arranjo típico, 0,016% das amostras chegam ao limite.
+- **RTP** (6.7.0): precisa ser importado pelo usuário (pasta copiada do PC ou ZIP); o instalador
+  oficial (.exe) ainda não é lido direto no celular.
 - **Assinatura da APK**: a 6.4.3 com a chave fixa ainda precisa de uma última desinstalação (as
   anteriores usavam chave de debug aleatória); daí em diante, as APKs instalam por cima. Sem os
   segredos no repositório, o CI volta à chave de debug.
-- **HMode7** (mapas 3D do Insurgence): renderizador x86 sem port; a chamada gera erro preciso.
+- **HMode7** (mapas 3D do Insurgence): nativo desde a 6.6.0 (idêntico à DLL). O jogo guarda os dados
+  do último mapa HM7 (até 245 MB) enquanto não entra em outro mapa HM7, como no Windows.
 - **Rede** (recursos online do Insurgence): indisponível; o jogo recebe erros Winsock documentados.
+- **Zlib no aparelho** (bug 37): a causa foi corrigida na 6.6.2; a recuperação da 6.6.1 continua só
+  em `Zlib::Inflate.inflate`. A linha `[ZLIB]` do próximo log confirma a correção no aparelho.
+- **Relatório de crash** (bug 40): só no motor legacy18. Crash por estouro da pilha de uma thread
+  sem pilha alternativa pode não chegar ao log; o motivo `[SAIDA]` depende do Android 11 ou mais novo.
 - **KleinBitmap** `save_pallete`/`modify_pallete`: formato sem documentação pública; erro preciso.
   `to_retro` e `add_outline` seguem a descrição publicada; limiares exatos podem diferir da DLL.
 - **Vídeo**: só OGV/Theora (player nativo do mkxp-z); AVI/MCI de vídeo é pulado com diagnóstico.
@@ -275,3 +447,13 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
    batalha → áudio → save → load → troca de mapas; os marcos aparecem sozinhos no diagnóstico.
 5. A cada falha: enviar o bloco `[WINBRIDGE]` ou `[RUBY_EXCEPTION]`. Ele já traz dll, função,
    assinatura, script e linha para decidir entre provider genérico, port ou perfil.
+6. **Insurgence e próximos jogos (6.6.4)**: instalar o artefato `Kerberus-XP-6.6.4-arm64-debug` por
+   cima e conferir "KERBERUS XP 6.6.4" no topo do diagnóstico. Se algo der errado, tocar em
+   **Copiar resumo para enviar** e mandar o texto inteiro. Ele traz o `[CRASH]` com o nome das
+   funções, a `[SAIDA]` e o último erro Ruby. O diagnóstico completo só é necessário se for pedido.
+7. **MIDI e RTP (6.7.0)**: instalar `Kerberus-XP-6.7.0-arm64-debug` por cima. Num jogo com música
+   `.mid` (ou num RMXP clássico, com o RTP importado em Configurações → RTP · jogos clássicos),
+   confirmar que a música toca. No diagnóstico devem aparecer `[MIDI] sintetizador carregado`,
+   `[MIDI] soundfont: ...` e `RTP: Standard (instalado)`. Num fangame só com OGG, conferir
+   `[BOOT] MIDI: ... sem .mid no jogo` (o sintetizador não é criado). Se a música ficar muda, o
+   resumo mostra a linha `[MIDI]` com o motivo.
