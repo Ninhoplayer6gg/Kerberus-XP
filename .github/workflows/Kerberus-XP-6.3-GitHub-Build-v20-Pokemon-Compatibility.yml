@@ -878,15 +878,37 @@ jobs:
               echo "[AUDIT][ERRO] libmkxp-z18.so contem o bootstrap Ruby 3"; exit 1; fi
             LC_ALL=C grep -a -q 'Kerberus Shared Compatibility' "$LIBDIR/libmkxp-z31.so" || {
               echo "[AUDIT][ERRO] libmkxp-z31.so sem o bootstrap moderno (Infinite Fusion)"; exit 1; }
-            if LC_ALL=C grep -a -q 'module KerberusLegacy18' "$LIBDIR/libmkxp-z31.so"; then
-              echo "[AUDIT][ERRO] libmkxp-z31.so contem codigo Legacy18"; exit 1; fi
+            # 6.8: libmkxp-z31.so also embeds the WinBridge of RPG Maker VX/VX
+            # Ace (kerberus-winbridge31-compat.h): the legacy18 modules in
+            # SHARED of tools/gen-legacy18-header.py, in the same
+            # KerberusLegacy18 namespace, plus kerberus/winbridge31/*.rb. Each
+            # engine carries exactly the modules of its generated bundle, so
+            # the legacy18-only ones (IO#eof?, Ruby 1.8.1, zlib guard, Ports,
+            # session, profiles) stay out of modern31.
+            sections() { { LC_ALL=C grep -a -o '# ==== [0-9A-Za-z_]*\.rb ====' "$1" || true; } | sort -u; }
+            sections app/jni/mkxp-z/binding/kerberus-legacy18-compat.rb > "$AUDIT_DIR/legacy18.sections"
+            sections app/jni/mkxp-z/binding/kerberus-winbridge31-compat.rb > "$AUDIT_DIR/winbridge31.sections"
+            sections "$LIBDIR/libmkxp-z18.so" > "$AUDIT_DIR/mkxp18.sections"
+            sections "$LIBDIR/libmkxp-z31.so" > "$AUDIT_DIR/mkxp31.sections"
+            test -s "$AUDIT_DIR/legacy18.sections" && test -s "$AUDIT_DIR/winbridge31.sections" || {
+              echo "[AUDIT][ERRO] pacotes Ruby gerados sem modulos"; exit 1; }
+            diff "$AUDIT_DIR/legacy18.sections" "$AUDIT_DIR/mkxp18.sections" || {
+              echo "[AUDIT][ERRO] libmkxp-z18.so com modulos diferentes do bootstrap Legacy18 gerado"; exit 1; }
+            diff "$AUDIT_DIR/winbridge31.sections" "$AUDIT_DIR/mkxp31.sections" || {
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem codigo exclusivo do Legacy18 ou nao tem o WinBridge31"; exit 1; }
+            LC_ALL=C grep -a -q 'WinBridge do modern31' "$LIBDIR/libmkxp-z31.so" || {
+              echo "[AUDIT][ERRO] libmkxp-z31.so sem o WinBridge31 (RPG Maker VX/VX Ace)"; exit 1; }
+            if LC_ALL=C grep -a -q 'Legacy18 bootstrap' "$LIBDIR/libmkxp-z31.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z31.so contem o bootstrap Legacy18"; exit 1; fi
+            if LC_ALL=C grep -a -q 'WinBridge do modern31' "$LIBDIR/libmkxp-z18.so"; then
+              echo "[AUDIT][ERRO] libmkxp-z18.so contem o WinBridge31"; exit 1; fi
             # H-Mode7 (6.6): native MGC_Hmode7.dll only in the legacy18 engine.
             has_hm7() { python3 -c 'import sys; sys.exit(0 if b"hm7_render\0" in open(sys.argv[1], "rb").read() else 1)' "$1"; }
             has_hm7 "$LIBDIR/libmkxp-z18.so" || {
               echo "[AUDIT][ERRO] libmkxp-z18.so sem o H-Mode7 nativo (MGC_Hmode7.dll)"; exit 1; }
             if has_hm7 "$LIBDIR/libmkxp-z31.so"; then
               echo "[AUDIT][ERRO] libmkxp-z31.so contem o H-Mode7 do legacy18"; exit 1; fi
-            echo "[AUDIT] separacao de runtimes: legacy18=WinBridge, modern31=compatibilidade moderna"
+            echo "[AUDIT] separacao de runtimes: legacy18=WinBridge, modern31=compatibilidade moderna + WinBridge31 ($(wc -l < "$AUDIT_DIR/mkxp31.sections") modulos)"
             # zlib (6.6.2): the dynamic linker binds each zlib call of the
             # engine to the first library in its NEEDED list that defines it.
             # FreeType's bundled copy in libSDL2_ttf.so (listed before libz.so)
