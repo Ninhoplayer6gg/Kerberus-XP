@@ -73,6 +73,16 @@
 > foi achado e corrigido antes de chegar ao aparelho (bug 43). RTP: o usuário importa a pasta ou o ZIP
 > do RTP e o Kerberus liga cada jogo ao RTP pelo `Game.ini`. Jogos sem MIDI (a maioria dos fangames
 > de Pokémon) não carregam o sintetizador no boot. Testado no PC; o aparelho ainda precisa confirmar.
+>
+> **6.8.0.** Compatibilidade e desempenho máximo. Jogos de **RPG Maker VX** (RGSS2, no legacy18 com
+> o Ruby 1.8 do player original) e **VX Ace** (RGSS3, no modern31) passam a ser importados, soltos ou
+> empacotados (`.rgss2a`/`.rgss3a`). O WinBridge do legacy18 foi portado para rodar igual no Ruby
+> 1.8.7 e no 3.1, e os jogos VX/VX Ace do modern31 ganham as mesmas APIs Win32: antes, a primeira DLL
+> do Windows num script de VX Ace pararia o jogo. Todas as bibliotecas do APK ficam alinhadas a
+> 16 KB (Android 15+), com a libc++ estática e oculta em cada uma. O cache de caminhos do mkxp-z,
+> montado no início de cada jogo, deixa de ser refeito por RTP e o PhysFS deixa de conferir links
+> simbólicos componente por componente: 7 a 9 vezes mais rápido no PC com RTP (bugs 44 a 46). Testado
+> no PC; nenhum jogo VX/VX Ace foi aberto no aparelho.
 
 ## 1. Estado por jogo
 
@@ -86,6 +96,10 @@
 A seleção de runtime da 6.3 foi testada com casos para os quatro jogos, RGSS1 comum, RGSS3,
 jogos com `mkxp.json`, com `x64-msvcrt-ruby310.dll`, com scripts externos do Essentials v19+ e
 com o override `.kerberus-runtime`.
+
+Desde a 6.8.0, jogos de RPG Maker VX (legacy18) e VX Ace (modern31 com o WinBridge) são importados e
+têm runtime escolhido pelos mesmos testes (`RuntimeSelectorHostTest`, `VxImportHostTest`). Nenhum
+jogo VX ou VX Ace foi aberto no aparelho ainda.
 
 ## 2. Bugs encontrados, causas raízes e soluções
 
@@ -133,6 +147,9 @@ com o override `.kerberus-runtime`.
 | 40 | Insurgence no aparelho (6.6.1): o jogo fechou ao começar a história e voltou ao Kerberus, sem nenhuma linha no log | Diagnóstico | Nenhum registro de crash nativo nem do motivo com que o Android encerra o processo | Bloco `[CRASH]` no legacy18 (sinal, endereço, thread, backtrace, linha Ruby, memória; o sinal segue para o tratamento anterior) e linha `[SAIDA]` no launcher com o motivo do Android 11+ (`LOW_MEMORY`, `CRASH_NATIVE`…). A causa em si ainda depende do próximo log | `crash_report_test.cpp` (15, x86 e arm64), `RuntimeExitHostTest` (15), SIGSEGV real no harness |
 | 41 | Insurgence no aparelho (6.6.2): `[CRASH] sinal 6 (SIGABRT)` vindo de `__vsprintf_chk` ao começar a história | C++ (legacy18) / FORTIFY | `Color`, `Tone` e `Rect#to_s`/`inspect` escreviam `"(%f, %f, %f, %f)"` num `char[50]`; `Tone.new(-255,-255,-255,255)` precisa de 52 bytes. O bionic confere `sprintf` com o tamanho do buffer e aborta; o glibc, em C++ com clang, não confere, e o harness não via. Endereços simbolizados no CI: `ToneStringify` (`etc-binding.cpp:184`) chamado por `rb_call0` | Buffer de 128 com `snprintf`, mesmo texto do RGSS. Harness com `_FORTIFY_SOURCE=2` e a conferência do bionic para `sprintf`/`snprintf` em C++ (`tools/game-harness/fortify-bionic.h`); build-id no `[CRASH]` | `etc_stringify_test.rb` (12; aborta com o código antigo), reprodução e correção no harness |
 | 42 | (latente) O motor usava duas cópias da libc++ ao mesmo tempo | Bibliotecas do APK | A `libopenal.so` levava uma cópia própria da libc++ e a exportava. O Makefile das dependências pedia `CMAKE_ANDROID_STL_TYPE=c++_shared`, mas o toolchain do NDK lê `ANDROID_STL` (padrão `c++_static`). Como vem antes da `libc++_shared.so` na ordem de busca, o `libmkxp-z18.so` e o `libmkxp-z31.so` ligavam parte das funções da libc++ (strings, streams, exceções) a essa cópia e o resto à `libc++_shared.so`. Achado pela auditoria de ligação de símbolos na primeira APK real (165 DUPLICADO; nenhuma SOMBRA) | A `libopenal.so` era uma cópia pré-compilada guardada no projeto, que o CI nunca recompilava. O CI passa a compilar a OpenAL Soft 1.23.0 do código-fonte com `-DANDROID_STL=c++_shared`. Sobra 1 DUPLICADO inofensivo (`__emutls_get_address`, auxiliar do compilador, na `libruby.so` e na `libc++_shared.so`). A auditoria da APK confere que a `libopenal.so` usa a `libc++_shared.so` e reprova SOMBRA, AUSENTE e SEM_DEFINICAO | `symbol_binding_test.sh` (16); auditoria da APK |
+| 44 | Início de cada jogo lento em jogos grandes, pior com RTP: o cache de caminhos do mkxp-z levava 5,3 s no PC para 155 mil arquivos com um RTP e 7,9 s com dois | Desempenho / filesystem | O `PHYSFS_enumerate` entrega um nome uma vez por montagem que o tem, e listar uma pasta já junta todas. O jogo, o pacote RGSSAD e cada RTP têm `Graphics/` e `Audio/`, e o `cacheEnumCB` do mkxp-z descia na árvore inteira de novo para cada uma. Somava-se a isso a verificação de links simbólicos do PhysFS: cerca de 6 `stat` por arquivo | O `cacheEnumCB` pula o mesmo caminho exato já visto, antes do `stat` (o cache sai idêntico). No Android o PhysFS permite links (`KERBERUS_PHYSFS_SYMLINKS=0` religa a verificação): os jogos e RTPs são extraídos pelo launcher, que não cria links, e um script já lê qualquer arquivo do app pelo Ruby. Medido no PC: 5,3 s → 0,73 s (1 RTP), 7,9 s → 0,85 s (2 RTPs); cada arquivo aberto no jogo também deixa de pagar a verificação | `pathcache_test.cpp` (o `filesystem.cpp` real; o código antigo faz 4 vezes mais `PHYSFS_stat` e é reprovado) |
+| 45 | (latente) Num aparelho com páginas de 16 KB (Android 15+) o motor não carregaria | Bibliotecas do APK | A `libc++_shared.so` pré-compilada do NDK r23 é alinhada a 4 KB, e todas as bibliotecas do jogo dependiam dela. A `libopenal.so` também saía a 4 KB: no CMake, o toolchain do NDK define `CMAKE_SHARED_LINKER_FLAGS` antes de o CMake ler o `LDFLAGS` | Cada biblioteca leva a libc++ que usa, estática e oculta (`--exclude-libs`); nenhum objeto ou exceção C++ cruza bibliotecas. Flags de 16 KB explícitas no CMake da OpenAL. A auditoria da APK reprova biblioteca abaixo de 16 KB, dependência de libc++ compartilhada e runtime C++ exportado | auditoria da APK no CI; mecanismo do `--exclude-libs` testado no host |
+| 46 | (latente) Um jogo de VX cujo arquivo de scripts tinha outra extensão (`Scripts.dat`) rodaria como XP | Seleção de engine | O mkxp-z deduz a versão RGSS só pela extensão do `Scripts=` do `Game.ini` | O launcher passa a engine que leu do `Game.ini` (extensão, senão a DLL do `Library=`) em `KERBERUS_RGSS_VERSION`; o `mkxp.json` do jogo continua vencendo | `VxImportHostTest`; `fluidlite_midi_test.cpp` (`kerberusEnvRgss`) |
 | 43 | (latente, achado antes do aparelho) Com o FluidLite, reverb e chorus ficariam sempre ligados, qualquer que fosse `midiReverb`/`midiChorus` | MIDI | O mkxp-z grava `synth.reverb.active` e `synth.chorus.active` com `settings_setint` (API do FluidSynth 2.x). O FluidLite segue a API 1.x: registra essas opções como texto (`"yes"`/`"no"`), recusa o inteiro e fica no padrão `"yes"`. A opção do jogo e a do Kerberus não teriam efeito | `kerberusMidiFlag` (`src/audio/kerberus-midi.h`) grava o inteiro e o texto; a chamada do tipo errado falha sem efeito, nas duas bibliotecas | `fluidlite_midi_test.cpp`: só `setint` deixa `"yes"` e o som muda; o `SharedMidiState` corrigido soa igual a efeitos desligados |
 
 ## 3. Implementado
@@ -325,6 +342,45 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 - As variáveis do launcher para o motor são sempre definidas (vazias quando não há valor), para um jogo
   não herdar o RTP ou o soundfont de outro no mesmo processo.
 
+### 6.8.0
+
+- **RPG Maker VX (RGSS2)**, motor legacy18: importação com `Data/Scripts.rvdata` solto ou `.rgss2a`
+  (RGSSAD v1), cabeçalho conferido antes de extrair; um pacote de outra engine que a do `Game.ini` é
+  recusado. Roda com o Ruby 1.8 do player original do VX e recebe tudo do legacy18 (WinBridge, ports,
+  regras do Ruby 1.8.1, pulo de quadros). A DLL do player (`RGSS202E.dll`) responde como a do XP. Um
+  VX com `mkxp.json` vai para o modern31.
+- **RPG Maker VX Ace (RGSS3)**, motor modern31: importação com `Scripts.rvdata2` solto ou `.rgss3a`
+  (RGSSAD v3, lido como o `rgssad.cpp` do mkxp-z). A análise de compatibilidade lê os scripts dos
+  dois formatos.
+- **WinBridge no Ruby 3.1**: os arquivos do legacy18 que formam o WinBridge (núcleo, assinaturas,
+  memória, gravador WINTRACE, os provedores de `kernel32`, `user32`, `advapi32`, `shell32`, `winmm`,
+  `gdi32`, `msvcrt`, XInput, Winsock, INI, registro virtual, entrada ao vivo, áudio, caminhos e
+  variáveis do Windows, gancho de quadro e `[PERF]`) viram também o pacote
+  `kerberus-winbridge31-compat.h` (`tools/gen-legacy18-header.py`), avaliado pelo `binding-mri.cpp`
+  do modern31 para RGSS2/RGSS3, depois do bootstrap Pokémon. A ativação própria
+  (`kerberus/winbridge31/99_activate.rb`) liga WinBridge, caminhos, variáveis, gravador e gancho de
+  quadro; Ruby 1.8.1, IO, zlib, ports e "salvar agora" continuam só no legacy18. Se o pacote falhar
+  ao carregar, o erro vai para o relatório e o jogo segue sem a ponte. As funções nativas que o
+  WinBridge usa (`KerberusNative.key_down?`, `mouse_position`, `pad_buttons`, `pad_axis`,
+  `controller_rumble`, `uptime_ms`, `monotonic_ns`, `disk_space`) passam a existir nos dois motores.
+- **Portabilidade 1.8/3.1**: no Ruby 3.1, `String#[]` e `length` contam caracteres e cada texto tem
+  codificação. A camada `Bytes` (`00_core.rb`) trata os buffers Win32 como bytes nas duas versões; os
+  textos entram como bytes (argumentos do jogo, nomes de arquivos, título, ambiente) e saem no buffer
+  do jogo com a codificação dele, ou como UTF-8 válido em logs e mensagens. Os wrappers de
+  `File`/`Dir`/`IO` repassam argumentos nomeados (`ruby2_keywords`), e o `Dir.glob` sem diferenciar
+  maiúsculas usa classes `[aA]`, que valem nas duas versões (o Ruby 3.1 ignora `FNM_CASEFOLD` no
+  Linux). No modern31 os nomes com acento também são comparados sem diferenciar maiúsculas.
+- **Ruby 1.9 do RGSS3**: `Hash#index` e `Thread.exclusive`, que o Ruby 3 removeu, são adicionados só
+  quando faltam. `MessageBox` usa o `msgbox` do RGSS3; os marcos leem a cena do `SceneManager`.
+- **Versão RGSS para o motor**: `KERBERUS_RGSS_VERSION` (bug 46).
+- **16 KB**: bug 45.
+- **Desempenho**: bug 44. Também medidos e descartados por não ganharem nada: ajuste do GC do Ruby
+  3.1 por variáveis `RUBY_GC_*` (14 coletas viram 6 no boot de dados no estilo Essentials, mas o tempo
+  de coleta fica nos mesmos ~100 ms) e libpng no lugar do `stb_image` do SDL_image (37,3 ms contra
+  37,6 ms num tileset de 256×8192).
+- **Interface**: textos de importação e do RTP citam XP, VX e VX Ace (RTP em `RGSS\Standard`,
+  `RGSS2\RPGVX`, `RGSS3\RPGVXAce`); preset de controles "RPG Maker XP / VX / VX Ace".
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
@@ -368,6 +424,14 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 | 6.7.0: soundfont, opções e pré-carga (`MidiSupportHostTest.java`) | 33 | OK |
 | 6.7.0: resumo com RTP faltando e MIDI mudo (`ReportSummaryHostTest.java`) | 2 | OK |
 | 6.7.0: classes Android novas (`MidiSettings`, `RtpSettings`) com stubs da API usada, alvo Java 8, `-Xlint:all` (o `android.jar` não pôde ser baixado neste ambiente; o Gradle do CI compila o app inteiro) | 9 arquivos | OK |
+| 6.8.0: importação de VX e VX Ace (`VxImportHostTest.java`): pacotes RGSSAD v1/v3 montados como o RPG Maker grava, scripts soltos e empacotados, scripts renomeados (bug 46), runtime escolhido, pacotes recusados | 31 | OK |
+| 6.8.0: seleção de runtime com VX/VX Ace (`RuntimeSelectorHostTest.java`) | +5 casos | OK |
+| 6.8.0: WinBridge no Ruby 3.1 contra o pacote do modern31: 9 testes do legacy18 (áudio, chamadas adiadas, APIs comuns, caminhos, INI/registro, entrada ao vivo e memória, gravador, assinaturas) | 434 | OK |
+| 6.8.0: VX Ace no modern31 (`tests/winbridge31/test_vxace.rb`): ativação, Ruby 1.9, acentos em INI/buffers/pastas, UTF-16, `msgbox`, argumentos nomeados em `File`/`Dir`, marcos pelo `SceneManager`, `[PERF]` | 38 | OK |
+| 6.8.0: ordem do motor (`test_engine_order.rb`): bootstrap Pokémon inalterado inativo no VX Ace, depois o WinBridge e os scripts do jogo | 7 | OK |
+| 6.8.0: cache de caminhos (`pathcache_test.cpp`): `filesystem.cpp`, `filesystemImpl.cpp` e `rgssad.cpp` reais sobre o PhysFS, jogo + RGSSAD + 2 RTPs, um `PHYSFS_stat` por caminho, nomes do jogo antes do RTP, links simbólicos | 16 (o código antigo reprova) | OK |
+| 6.8.0: legacy18 em Ruby 1.8.7 depois da portabilidade (24 arquivos; mais 3 aliases de DLL e a versão do bootstrap) | 836 | OK |
+| 6.8.0: variáveis do launcher (`kerberusEnvRgss`) no teste nativo de MIDI | +4 | OK |
 
 ## 5. Limitações restantes
 
@@ -424,9 +488,22 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 - **Teclas de trava** (Caps/Num/Scroll): o SDL não expõe o estado de toggle ao mkxp-z.
 - `ToUnicode` usa layout US; texto internacional chega pelo port `text_entry` (IME) quando o editor
   do Essentials é reconhecido.
-- Caminhos sem diferenciar maiúsculas valem só para ASCII (como o `downcase` do Ruby 1.8).
+- Caminhos sem diferenciar maiúsculas valem só para ASCII no legacy18 (como o `downcase` do Ruby 1.8);
+  no modern31 (VX/VX Ace) as letras acentuadas também. O `Dir.glob` com letra acentuada em outra
+  caixa no padrão (por exemplo `CANÇÃO`) ainda não acha `canção`.
 - `keybd_event`/`SendInput` não injetam teclas.
-- Marcos além do BOOT só são gravados automaticamente no legacy18; o modern31 não foi tocado.
+- Marcos além do BOOT são gravados no legacy18 e, desde a 6.8.0, nos jogos VX/VX Ace do modern31;
+  jogos de XP no modern31 (Infinite Fusion) seguem só com o BOOT (bootstrap inalterado).
+- **VX e VX Ace** (6.8.0): nenhum jogo foi aberto no aparelho. No VX Ace, recursos do Ruby 1.9 que o
+  Ruby 3 removeu e que não dá para devolver de fora (por exemplo `Proc.new` sem bloco) ainda param o
+  script com o erro do Ruby; `Hash#index` e `Thread.exclusive` foram devolvidos. DLLs próprias de um
+  jogo (Steam, plugins) seguem o mesmo caminho do XP: declarar funciona, chamar dá
+  `WINBRIDGE_UNAVAILABLE` com o nome a portar.
+- **16 KB** (6.8.0): alinhamento e libc++ conferidos pela auditoria da APK no CI, não num aparelho com
+  páginas de 16 KB. A libc++ estática em cada biblioteca aumenta um pouco o tamanho da APK.
+- **Cache de caminhos** (6.8.0): ganho medido no PC; no aparelho o `[BOOT]` e o `[PERF]` mostram o
+  tempo real. Com links simbólicos permitidos, um link dentro da pasta do jogo passa a ser seguido
+  (o launcher nunca cria links).
 - Nenhum backend de DLL (Box64/Hangover/FEX/Winlator) foi integrado; existe só o ponto de extensão.
 - Ports com cobertura incompleta aplicam mesmo assim e registram `PORT_COVERAGE` com os nomes que
   faltam; o próximo log real dirá se algum desses nomes é usado.
@@ -457,3 +534,10 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
    `[MIDI] soundfont: ...` e `RTP: Standard (instalado)`. Num fangame só com OGG, conferir
    `[BOOT] MIDI: ... sem .mid no jogo` (o sintetizador não é criado). Se a música ficar muda, o
    resumo mostra a linha `[MIDI]` com o motivo.
+8. **VX, VX Ace, 16 KB e boot (6.8.0)**: instalar `Kerberus-XP-6.8.0-arm64-debug` por cima.
+   Importar um jogo de RPG Maker VX e um de VX Ace (ZIP do jogo completo; o RTP `RPGVX`/`RPGVXAce`
+   em Configurações → RTP, se o jogo usar). No diagnóstico: `Native loader: legacy18` para o VX e
+   `modern31` para o VX Ace; no VX Ace, `[COMPAT] WinBridge31 ativo` e `[WINBRIDGE31_READY]`. Se algo
+   parar, **Copiar resumo para enviar**. Num jogo grande com RTP, comparar o tempo até o título com a
+   6.7.0. Quem tiver um aparelho com Android 15+ e páginas de 16 KB (ou a opção de desenvolvedor de
+   16 KB do Pixel) pode confirmar que o Kerberus abre.

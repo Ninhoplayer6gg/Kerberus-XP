@@ -166,12 +166,14 @@ jobs:
           bash tests/legacy18/run-legacy18-tests.sh | tee "$GITHUB_WORKSPACE/legacy18-tests.log"
           KERBERUS_TEST_WORK="$RUNNER_TEMP/catalog" "$RUBY18" tools/gen-legacy18-catalog.rb --check | tee -a "$GITHUB_WORKSPACE/legacy18-tests.log"
 
-      - name: Infinite Fusion / modern31 regression on Ruby 3.1
+      - name: Infinite Fusion / modern31 regression and WinBridge (VX Ace) on Ruby 3.1
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           set -euo pipefail
           bash tests/modern31/run-modern31-tests.sh | tee "$GITHUB_WORKSPACE/modern31-tests.log"
+          # 6.8: the legacy18 WinBridge on Ruby 3.1 for RPG Maker VX/VX Ace.
+          bash tests/winbridge31/run-winbridge31-tests.sh | tee -a "$GITHUB_WORKSPACE/modern31-tests.log"
 
       - name: C++ checks for both engines and native lifecycle test
         shell: bash
@@ -198,6 +200,9 @@ jobs:
           export RUBY31_ARCH_INCLUDE="$("$RUBY31" -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
           bash tools/host-compile-check.sh | tee "$GITHUB_WORKSPACE/host-cxx.log"
           bash tests/native/run-lifecycle-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
+          # 6.8: mkxp-z's path cache (filesystem.cpp) over PhysFS with RTPs
+          # that share the game's folders: one PHYSFS_stat per path.
+          bash tests/native/run-pathcache-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
           # 6.7: MIDI. FluidLite from the commit get_deps.sh pins, built on the
           # host like fluidlite.mk, loaded by the engine's fluid-fun.cpp and
           # sharedmidistate.h with the APK's TimGM6mb.sf2.
@@ -445,8 +450,10 @@ jobs:
       # 6.6.4: the checkpoint's prebuilt libopenal.so carried its own exported
       # copy of libc++ (the NDK toolchain file ignored CMAKE_ANDROID_STL_TYPE).
       # OpenAL Soft 1.23.0 (cloned by get_deps.sh) is built here with the
-      # project's CMake arguments, which now include ANDROID_STL=c++_shared.
-      - name: Build OpenAL Soft from source (shared libc++)
+      # project's CMake arguments. 6.8: static libc++ hidden inside the
+      # library and 16 KB pages (Makefile KERBERUS_SO_LDFLAGS); the 6.7 build
+      # was aligned for 4 KB pages.
+      - name: Build OpenAL Soft from source (static libc++, 16 KB pages)
         shell: bash
         working-directory: ${{ env.PROJECT_DIR }}/app/jni
         run: |
@@ -468,9 +475,19 @@ jobs:
           READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           "$READELF" -d "$LIB" | tee "$RUNNER_TEMP/openal.dynamic"
           grep -q 'SONAME.*\[libopenal\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: SONAME da libopenal.so"; exit 1; }
-          grep -q 'NEEDED.*\[libc++_shared\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: libopenal.so sem a libc++_shared.so"; exit 1; }
+          if grep -q 'NEEDED.*c++' "$RUNNER_TEMP/openal.dynamic"; then echo "ERRO: libopenal.so depende de uma libc++ compartilhada"; exit 1; fi
           grep -q 'NEEDED.*\[libOpenSLES\.so\]' "$RUNNER_TEMP/openal.dynamic" || { echo "ERRO: libopenal.so sem o backend OpenSL ES"; exit 1; }
-          echo KERBERUS_OPENAL_OK
+          ALIGN="$("$READELF" -lW "$LIB" | awk '$1=="LOAD" {print $NF}' | sort -u | tr '\n' ' ')"
+          test -n "$ALIGN" || { echo "ERRO: libopenal.so sem segmentos LOAD"; exit 1; }
+          for value in $ALIGN; do
+            if (( value < 0x4000 )); then echo "ERRO: libopenal.so alinhada para paginas de 4 KB ($ALIGN)"; exit 1; fi
+          done
+          NM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$NM" -D --defined-only "$LIB" > "$RUNNER_TEMP/openal.nm"
+          awk '{print $NF}' "$RUNNER_TEMP/openal.nm" > "$RUNNER_TEMP/openal.exports"
+          if grep -qxE '__cxa_throw|__gxx_personality_v0|_Znwm' "$RUNNER_TEMP/openal.exports"; then
+            echo "ERRO: libopenal.so exporta a libc++ (--exclude-libs)"; exit 1; fi
+          echo "KERBERUS_OPENAL_OK (alinhamento $ALIGN)"
 
       - name: Generate mkxp-z embedded assets
         shell: bash
@@ -773,7 +790,7 @@ jobs:
               exit 1
             fi
 
-            for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so libc++_shared.so libfluidlite.so; do
+            for lib in libmkxp-z18.so libmkxp-z31.so libruby.so libopenal.so libfluidlite.so; do
               test -s "$LIBDIR/$lib" || {
                 echo "[AUDIT][ERRO] $lib ausente"
                 exit 1
@@ -810,7 +827,29 @@ jobs:
               "$READELF" -lW "$so" > "$ph" 2>/dev/null || true
               align="$(awk '$1=="LOAD" {print $NF}' "$ph" | sort -u | tr '\n' ',' | sed 's/,$//')"
               echo "  $(basename "$so"): ${align:-unknown}"
+              # 6.8: every library loads on 16 KB page devices (Android 15+).
+              test -n "$align" || { echo "[AUDIT][ERRO] $(basename "$so") sem segmentos LOAD"; BAD=1; }
+              for value in ${align//,/ }; do
+                if (( value < 0x4000 )); then echo "[AUDIT][ERRO] $(basename "$so") alinhada para paginas de 4 KB ($align)"; BAD=1; fi
+              done
             done < <(find "$LIBDIR" -type f -name '*.so' -print | sort)
+            test "$BAD" -eq 0
+            # 6.8: static libc++ hidden in each library (Application.mk): no
+            # libc++_shared.so, no library needs one or exports the C++ runtime.
+            if [ -e "$LIBDIR/libc++_shared.so" ]; then echo "[AUDIT][ERRO] libc++_shared.so (4 KB no NDK r23) no APK"; exit 1; fi
+            NM_LIBCXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+            while IFS= read -r so; do
+              base="$AUDIT_DIR/$(basename "$so")"
+              "$READELF" -d "$so" > "$base.needed"
+              if grep -q 'NEEDED.*libc++' "$base.needed"; then
+                echo "[AUDIT][ERRO] $(basename "$so") depende de uma libc++ compartilhada"; BAD=1; fi
+              "$NM_LIBCXX" -D --defined-only "$so" > "$base.nm"
+              awk '{print $NF}' "$base.nm" > "$base.exports"
+              if grep -qxE '__cxa_throw|__gxx_personality_v0|_Znwm' "$base.exports"; then
+                echo "[AUDIT][ERRO] $(basename "$so") exporta a libc++ (--exclude-libs ausente)"; BAD=1; fi
+            done < <(find "$LIBDIR" -type f -name '*.so' -print | sort)
+            test "$BAD" -eq 0
+            echo "[AUDIT] 16 KB: todas as bibliotecas; libc++ estatica e oculta em cada uma"
 
             # Kerberus 6.3: each engine embeds only its own compatibility layer.
             # The eval.c patch reads the hook global through a C string (NUL
@@ -893,12 +932,11 @@ jobs:
               "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/$ANDROID_API" \
               --java app/src/main/java/com/hatkid/mkxpz/MainActivity.java --strict
             # That report also showed the prebuilt libopenal.so with its own
-            # exported copy of libc++, bound by the engines before
-            # libc++_shared.so (165 DUPLICADO); OpenAL is now built from source
-            # (step "Build OpenAL Soft from source").
-            "$READELF" -d "$LIBDIR/libopenal.so" | grep -q 'NEEDED.*\[libc++_shared\.so' || {
-              echo "[AUDIT][ERRO] libopenal.so sem a libc++_shared.so (copia propria da libc++)"; exit 1; }
-            echo "[AUDIT] libopenal.so usa a libc++_shared.so"
+            # exported copy of libc++, bound by the engines (165 DUPLICADO);
+            # OpenAL is built from source (step "Build OpenAL Soft from
+            # source") and, since 6.8, keeps its static libc++ hidden (checked
+            # above for every library).
+            echo "[AUDIT] libopenal.so sem libc++ exportada"
             # 6.7: MIDI. Both engines dlopen libfluidlite.so (FluidLite, LGPL,
             # its own library) and resolve these names (fluid-fun.h); FluidLite
             # is C and must not carry a C++ runtime of its own.
