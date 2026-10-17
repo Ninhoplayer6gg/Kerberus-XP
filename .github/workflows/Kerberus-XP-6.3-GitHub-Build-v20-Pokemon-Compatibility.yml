@@ -49,7 +49,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends autoconf bison build-essential clang zlib1g-dev python3
+          # libuchardet-dev: 6.9 rgssad.cpp (archive names in legacy code pages)
+          sudo apt-get install -y --no-install-recommends autoconf bison build-essential clang zlib1g-dev python3 \
+            libuchardet-dev
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -203,6 +205,9 @@ jobs:
           # 6.8: mkxp-z's path cache (filesystem.cpp) over PhysFS with RTPs
           # that share the game's folders: one PHYSFS_stat per path.
           bash tests/native/run-pathcache-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
+          # 6.9: the WAVs SDL_sound 2.0.1 cannot play, converted while read
+          # (IMA ADPCM against SDL2's decoder), and RIFF MIDI.
+          bash tests/native/run-wav-test.sh | tee -a "$GITHUB_WORKSPACE/host-cxx.log"
           # 6.7: MIDI. FluidLite from the commit get_deps.sh pins, built on the
           # host like fluidlite.mk, loaded by the engine's fluid-fun.cpp and
           # sharedmidistate.h with the APK's TimGM6mb.sf2.
@@ -222,6 +227,131 @@ jobs:
             legacy18-tests.log
             modern31-tests.log
             host-cxx.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 6.9: the real legacy18 engine (mkxp-z + Ruby 1.8.7 with the APK's
+  # patches) built for Linux, running synthetic RPG Maker XP/VX games under
+  # Xvfb: tools/game-harness/conformance (no third-party game content).
+  harness:
+    name: Desktop harness conformance (real legacy18 engine, synthetic XP games)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PROJECT_DIR: ${{ github.workspace }}/_kerberus/project
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract 6.3 checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q "$SOURCE_ZIP" -d "$GITHUB_WORKSPACE/_kerberus"
+          test -f "$PROJECT_DIR/tools/game-harness/conformance/run-conformance.sh"
+
+      - name: Install harness packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf bison build-essential clang cmake zlib1g-dev \
+            python3 libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libopenal-dev libpixman-1-dev libphysfs-dev \
+            libvorbis-dev libogg-dev libtheora-dev libuchardet-dev libssl-dev libgl-dev xvfb xdotool ffmpeg \
+            libgl1-mesa-dri libglx-mesa0
+
+      # jni.h for graphics.cpp
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The source tree itself: the harness links libruby-static.a and the
+      # static extension objects (ext/Setup nodynamic).
+      - name: Cache Ruby 1.8.7 build tree (harness)
+        id: ruby18-tree-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/ruby187-tree
+            ${{ runner.temp }}/ruby18-harness
+          key: ruby18-tree-${{ env.RUBY18_TAG }}-ubuntu24-kerberus-${{ env.ONIG_PIN }}-${{ hashFiles('_kerberus/project/scripts/patch-ruby18-rgss1.py', '_kerberus/project/scripts/patch-ruby18-performance.py', '_kerberus/project/scripts/patch-ruby18-oniguruma.py', '_kerberus/project/scripts/ruby18-oniguruma/*', '_kerberus/project/scripts/patch-ruby18-io.py') }}
+
+      - name: Build Ruby 1.8.7 tree (harness)
+        if: steps.ruby18-tree-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TREE="$RUNNER_TEMP/ruby187-tree"
+          git clone -q --depth 1 --branch "$RUBY18_TAG" https://github.com/ruby/ruby "$TREE"
+          cd "$TREE"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-rgss1.py" eval.c
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-performance.py" .
+          git clone -q --depth 1 --branch "$ONIG_TAG" https://github.com/kkos/oniguruma "$RUNNER_TEMP/oniguruma-src"
+          test "$(git -C "$RUNNER_TEMP/oniguruma-src" rev-parse HEAD)" = "$ONIG_PIN"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-oniguruma.py" . "$RUNNER_TEMP/oniguruma-src"
+          python3 "$PROJECT_DIR/scripts/patch-ruby18-io.py" .
+          autoconf
+          printf 'option nodynamic\nstringio\nstrscan\nzlib\n' > ext/Setup
+          CFLAGS="-O2 -g -fno-strict-aliasing -std=gnu89 -Wno-implicit-function-declaration -Wno-int-conversion -Wno-incompatible-pointer-types" \
+            ./configure --prefix="$RUNNER_TEMP/ruby18-harness" --disable-install-doc > configure.log
+          make -j"$(nproc)" > make.log 2>&1 || { tail -80 make.log; exit 1; }
+          make install > install.log 2>&1
+          rm -rf .git
+          ./ruby -e 'exit(Regexp.respond_to?(:kerberus_oniguruma) ? 0 : 1)'
+
+      - name: Build SDL_sound 2.0.1 (static) and FluidLite (host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 -b v2.0.1 https://github.com/icculus/SDL_sound "$RUNNER_TEMP/sdlsound-src"
+          cmake -S "$RUNNER_TEMP/sdlsound-src" -B "$RUNNER_TEMP/sdlsound-build" -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DSDLSOUND_BUILD_SHARED=OFF \
+            -DSDLSOUND_BUILD_TEST=OFF -DSDLSOUND_DECODER_MIDI=OFF -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdlsound" > /dev/null
+          cmake --build "$RUNNER_TEMP/sdlsound-build" -j"$(nproc)" > /dev/null
+          cmake --install "$RUNNER_TEMP/sdlsound-build" > /dev/null
+          test -f "$RUNNER_TEMP/sdlsound/lib/libSDL2_sound.a"
+          # MIDI of the synthetic game: FluidLite at the commit get_deps.sh pins,
+          # built like fluidlite.mk (as tests/native/run-fluidlite-test.sh).
+          FLUIDLITE_COMMIT="$(sed -n 's/^FLUIDLITE_COMMIT=//p' "$PROJECT_DIR/app/jni/get_deps.sh")"
+          SRC="$RUNNER_TEMP/fluidlite"
+          mkdir -p "$SRC"
+          (cd "$SRC" && git init -q && git fetch -q --depth 1 https://github.com/divideconcept/FluidLite "$FLUIDLITE_COMMIT" \
+            && git -c advice.detachedHead=false checkout -q FETCH_HEAD)
+          J="$PROJECT_DIR/app/jni"
+          mapfile -t files < <(sed -n 's/^[[:space:]]*$(LOCAL_PATH)\/\(\(src\|stb\)\/[a-z_]*\.c\).*/\1/p' "$J/fluidlite.mk")
+          clang -shared -fPIC -O2 -DNDEBUG -w -I"$J/preconfigured/universal/fluidlite" -I"$SRC/include" -I"$SRC/src" \
+            -I"$SRC/stb" "${files[@]/#/$SRC/}" -lm -o "$RUNNER_TEMP/libfluidlite.so"
+
+      - name: Build the desktop harness
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          RUBY18_SRC="$RUNNER_TEMP/ruby187-tree" SDL_SOUND_PREFIX="$RUNNER_TEMP/sdlsound" OUT="$RUNNER_TEMP/kh" \
+            bash tools/game-harness/build-desktop.sh 2>&1 | tail -3
+
+      - name: Conformance suite (synthetic RPG Maker XP and VX games)
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          KH_OUT="$RUNNER_TEMP/kh" RUBY18="$RUNNER_TEMP/ruby18-harness/bin/ruby" KH_FLUID="$RUNNER_TEMP/libfluidlite.so" \
+            bash tools/game-harness/conformance/run-conformance.sh "$RUNNER_TEMP/conformance" | tee "$GITHUB_WORKSPACE/conformance.log"
+
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kerberus-XP-6.3-v20-conformance
+          path: |
+            conformance.log
+            ${{ runner.temp }}/kh/compile.err
+            ${{ runner.temp }}/conformance/*/kh-results.txt
+            ${{ runner.temp }}/conformance/*/engine.out
+            ${{ runner.temp }}/conformance/*/kerberus-runtime.log
           if-no-files-found: ignore
           retention-days: 14
 

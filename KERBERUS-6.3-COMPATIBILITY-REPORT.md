@@ -83,6 +83,16 @@
 > montado no início de cada jogo, deixa de ser refeito por RTP e o PhysFS deixa de conferir links
 > simbólicos componente por componente: 7 a 9 vezes mais rápido no PC com RTP (bugs 44 a 46). Testado
 > no PC; nenhum jogo VX/VX Ace foi aberto no aparelho.
+>
+> **6.9.0.** Pedido: que todos os jogos de RPG Maker XP rodem no Kerberus. O harness do PC ganhou uma
+> **suíte de conformidade**: jogos de XP sintéticos (nenhum conteúdo de terceiros) que usam o que os
+> jogos de XP usam, com recursos nos formatos do XP, rodando no motor legacy18 real; ela roda no CI a
+> cada versão. O que ela e os testes escritos junto acharam está nos bugs 47 a 55: nomes japoneses,
+> chineses, coreanos e acentuados dentro do `Game.rgssad` e em ZIPs feitos no Windows; WAVs que o
+> SDL_sound não toca (IMA ADPCM, 24 e 32 bits, 5.1, formato estendido) e MIDI em RIFF; o `==` de
+> `Color`/`Tone`/`Rect` sempre falso no legacy18; bitmaps maiores que a GPU em `Plane` e `Window`;
+> erros do C++ que fechavam o app; `RGSSGetRTPPath`; e a imagem embaralhada do Sprite com bitmap
+> enorme da 6.6. Testado no PC; o aparelho ainda precisa confirmar.
 
 ## 1. Estado por jogo
 
@@ -100,6 +110,11 @@ com o override `.kerberus-runtime`.
 Desde a 6.8.0, jogos de RPG Maker VX (legacy18) e VX Ace (modern31 com o WinBridge) são importados e
 têm runtime escolhido pelos mesmos testes (`RuntimeSelectorHostTest`, `VxImportHostTest`). Nenhum
 jogo VX ou VX Ace foi aberto no aparelho ainda.
+
+Desde a 6.9.0, a suíte de conformidade (`tools/game-harness/conformance`) roda no motor legacy18 real
+17 jogos sintéticos: um RPG Maker XP completo em recursos (164 verificações no total, com MIDI), bitmaps
+maiores que a GPU no XP e no VX, e 13 pacotes `Game.rgssad` com nomes em 7 páginas de código. Jogos
+reais de XP fora dos fangames de Pokémon ainda não foram abertos no aparelho.
 
 ## 2. Bugs encontrados, causas raízes e soluções
 
@@ -151,6 +166,15 @@ jogo VX ou VX Ace foi aberto no aparelho ainda.
 | 45 | (latente) Num aparelho com páginas de 16 KB (Android 15+) o motor não carregaria | Bibliotecas do APK | A `libc++_shared.so` pré-compilada do NDK r23 é alinhada a 4 KB, e todas as bibliotecas do jogo dependiam dela. A `libopenal.so` também saía a 4 KB: no CMake, o toolchain do NDK define `CMAKE_SHARED_LINKER_FLAGS` antes de o CMake ler o `LDFLAGS` | Cada biblioteca leva a libc++ que usa, estática e oculta (`--exclude-libs`); nenhum objeto ou exceção C++ cruza bibliotecas. Flags de 16 KB explícitas no CMake da OpenAL. A auditoria da APK reprova biblioteca abaixo de 16 KB, dependência de libc++ compartilhada e runtime C++ exportado | auditoria da APK no CI; mecanismo do `--exclude-libs` testado no host |
 | 46 | (latente) Um jogo de VX cujo arquivo de scripts tinha outra extensão (`Scripts.dat`) rodaria como XP | Seleção de engine | O mkxp-z deduz a versão RGSS só pela extensão do `Scripts=` do `Game.ini` | O launcher passa a engine que leu do `Game.ini` (extensão, senão a DLL do `Library=`) em `KERBERUS_RGSS_VERSION`; o `mkxp.json` do jogo continua vencendo | `VxImportHostTest`; `fluidlite_midi_test.cpp` (`kerberusEnvRgss`) |
 | 43 | (latente, achado antes do aparelho) Com o FluidLite, reverb e chorus ficariam sempre ligados, qualquer que fosse `midiReverb`/`midiChorus` | MIDI | O mkxp-z grava `synth.reverb.active` e `synth.chorus.active` com `settings_setint` (API do FluidSynth 2.x). O FluidLite segue a API 1.x: registra essas opções como texto (`"yes"`/`"no"`), recusa o inteiro e fica no padrão `"yes"`. A opção do jogo e a do Kerberus não teriam efeito | `kerberusMidiFlag` (`src/audio/kerberus-midi.h`) grava o inteiro e o texto; a chamada do tipo errado falha sem efeito, nas duas bibliotecas | `fluidlite_midi_test.cpp`: só `setint` deixa `"yes"` e o som muda; o `SharedMidiState` corrigido soa igual a efeitos desligados |
+| 47 | Jogo de XP de autor japonês, chinês, coreano ou europeu empacotado em `Game.rgssad`: imagens e sons com nome fora do ASCII não eram achados (`Errno::ENOENT` no título ou num mapa) | Filesystem / RGSSAD | O empacotador do RPG Maker grava os nomes na página ANSI do Windows de quem empacotou (CP932, GBK, CP949, Big5, CP1252, CP1251, CP1250); o `rgssad.cpp` do mkxp-z os usava como UTF-8. No Shift-JIS, GBK e Big5 o byte 0x5C (`\`) também aparece no meio de um caractere e virava separador de pasta | O `rgssad.cpp` converte os nomes que não são UTF-8: vale a página cujos nomes aparecem nos textos dos dados do próprio pacote (`Data/*.rxdata`); sem essa pista, o uchardet e uma pontuação por faixas de bytes. O `\` vira `/` só depois da conversão. A linha `[RGSSAD]` do relatório diz quantos nomes, de qual página e por quê | `rgssad_names_test.cpp` (63); 13 jogos sintéticos no motor real |
+| 48 | ZIP de jogo feito no Windows (Explorer, WinRAR, 7-Zip, PowerShell) com nomes japoneses ou acentuados: importação recusada ou com nomes trocados, e o jogo não achava os arquivos | Importação | O `java.util.zip` lê nomes sem a marca UTF-8 como UTF-8: o Android 7+ recusa o ZIP (`MALFORMED`) e o 6 troca os bytes por um caractere de substituição. O Explorer grava na página OEM (CP850 no Brasil, CP437 nos EUA, CP932 no Japão…) | Leitor de ZIP próprio (`ZipArchive`): nome Unicode do WinRAR/7-Zip (0x7075) com CRC, marca UTF-8, UTF-8 sem marca, senão a página confirmada pelos dados do jogo (soltos ou dentro do `Game.rgssad`), senão pontuação; ZIP64, SFX e `\` do PowerShell; senha ou compressão sem suporte com mensagem clara. O relatório da importação diz a página usada | `ZipNamesHostTest.java` (174) |
+| 49 | `RGSSGetRTPPath`/`RGSSGetPathWithRTP` (exportadas pela `RGSS102E.dll`) devolviam vazio: scripts que procuram arquivos no RTP por conta própria não os achavam | WinBridge / RTP | Sem provider ligado ao RTP importado (6.7.0) | Devolvem o caminho Windows do RTP importado pelo índice do `Game.ini`; o registro virtual ganha `HKLM\SOFTWARE\Enterbrain\RGSS\RTP` com os RTPs instalados, como o instalador do Windows grava | `test_ini_registry.rb` (Ruby 1.8.7 e 3.1) |
+| 50 | Sprite com bitmap maior que a GPU (6.6) mostrava linhas de outra parte da imagem, ou a imagem embaralhada, quando o bitmap era criado durante o desenho do quadro | Gráficos | Ao criar as páginas de GPU de um bitmap enorme no meio do desenho da tela, o `TexPool` ligava o FBO da página nova e ninguém religava o anterior: o resto do quadro era desenhado dentro da página | `ensureMegaPages` guarda e devolve o FBO ligado | `50_mega.rb` no motor real |
+| 51 | `Plane` e `Window` com bitmap maior que a GPU (créditos e listas longas, panoramas enormes): erro "mega surface" no `Plane`/`Window` do XP e contents invisível no `Window` do VX; `hue_change`, `gradient_fill_rect`, `blur` e `text_size` também davam erro nesses bitmaps | Gráficos | Só o Sprite desenhava bitmaps maiores que a textura máxima (6.6); o WindowVX ligava a textura 0 | `Plane` desenha página por página com repetição, zoom e viewport; `Window`/`WindowVX` desenham o contents por páginas; as quatro operações em software com a mesma conta dos shaders | `50_mega.rb` (14) e `52_mega_vx.rb` no motor real |
+| 52 | Erro do C++ em `Bitmap#blur`/`radial_blur`, `Graphics.update`/`wait`/`freeze`/`fadeout`/`fadein`/`resize_screen` ou `Tilemap#autotiles[]=` fechava o app sem mensagem | Estabilidade | A exceção C++ atravessava a ligação com o Ruby (no Ruby 3.1, também a região sem GVL do `update`/`wait`) e encerrava o processo | Essas ligações convertem a exceção em erro Ruby, que o jogo e o relatório tratam como qualquer erro | `50_mega.rb` (`blur` de bitmap descartado: erro Ruby, processo vivo) |
+| 53 | Efeitos sonoros e músicas WAV mudos: IMA ADPCM (comum em efeitos sonoros antigos), PCM de 24 e 32 bits, ponto flutuante de 64 bits, A-law, mu-law, formato estendido (`WAVE_FORMAT_EXTENSIBLE`; o FFmpeg, por exemplo, grava assim acima de 16 bits ou de 2 canais) e 5.1 | Áudio | O SDL_sound 2.0.1 lê só PCM de 8/16 bits, MS ADPCM e float de 32 bits; o mkxp-z não tem formato OpenAL para PCM de 32 bits (divisão por zero no `SoundEmitter`) nem para mais de 2 canais. Cabeçalhos com chunk ímpar antes dos dados, `data` antes do `fmt`, tamanho 0 ou taxa média 0 (divisão por zero no SDL_sound) também falhavam | `kerberus-wav.cpp` converte esses WAVs para PCM de 16 bits enquanto são lidos (memória constante, com `seek` para loop e `Audio.bgm_pos`), mixando 5.1 em estéreo; os que o SDL_sound lê ficam com ele. IMA ADPCM igual ao SDL2 bit a bit (algoritmo da Microsoft); A-law/mu-law iguais ao FFmpeg | `wav_compat_test.cpp` (88, também com ASan/UBSan); 16 WAVs no motor real |
+| 54 | Música MIDI em RIFF (RMID: `.rmi`, ou `.mid` com cabeçalho RIFF) muda | Áudio / MIDI | O mkxp-z só mandava ao sintetizador arquivos que começam com `MThd`; o RMID ia para o SDL_sound, que não o toca | O `ALStream` reconhece RIFF/RMID e o `MidiSource` lê o MIDI de dentro do chunk `data`; o launcher conta `.rmi` como MIDI | `wav_compat_test.cpp` (7); `MidiSupportHostTest` (+1); `.mid` e `.rmi` em RIFF tocando no motor real com o FluidLite |
+| 55 | `Color.new(0, 0, 0) == Color.new(0, 0, 0)` dava `false` no legacy18 (XP e VX), e o mesmo com `Tone` e `Rect`: `Array#include?`/`index`/`delete` nunca achavam esses objetos, comparações com uma cor fixa nunca batiam e scripts que guardam o último tom ou retângulo refaziam o trabalho a cada quadro | Ruby / RGSS | O ramo Ruby 1.8 do `EQUAL_FUN` (`etc-binding.cpp`) devolvia `false` antes de comparar | Compara os valores, como o RGSS1/2; objeto de outra classe é só diferente (sem `TypeError`) | `60_rgss1.rb` no motor real (5) |
 
 ## 3. Implementado
 
@@ -381,6 +405,18 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 - **Interface**: textos de importação e do RTP citam XP, VX e VX Ace (RTP em `RGSS\Standard`,
   `RGSS2\RPGVX`, `RGSS3\RPGVXAce`); preset de controles "RPG Maker XP / VX / VX Ace".
 
+### 6.9.0
+
+- **Suíte de conformidade** (`tools/game-harness/conformance`): jogos sintéticos de XP e VX montados
+  na hora e rodados no motor legacy18 real (harness do PC); job `harness` no CI, que compila tudo do
+  zero e roda a suíte (cerca de 30 s de jogos). O harness compila em paralelo (27 s do zero no PC).
+- **Nomes em página de código do Windows**: no `Game.rgssad` (bug 47) e nos ZIPs importados (bug 48).
+- **Áudio**: WAVs que o SDL_sound não toca (bug 53) e MIDI em RIFF (bug 54).
+- **Gráficos**: bitmaps maiores que a GPU em `Plane`, `Window`, `WindowVX` e em mais operações
+  (bug 51); a imagem embaralhada do Sprite da 6.6 (bug 50).
+- **Estabilidade**: erros do C++ viram erros Ruby em vez de fechar o app (bug 52).
+- **RGSS**: `==` de `Color`/`Tone`/`Rect` (bug 55); `RGSSGetRTPPath` e registro do RTP (bug 49).
+
 ## 4. Testes adicionados
 
 | Suíte | Verificações | Resultado local |
@@ -432,6 +468,12 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 | 6.8.0: cache de caminhos (`pathcache_test.cpp`): `filesystem.cpp`, `filesystemImpl.cpp` e `rgssad.cpp` reais sobre o PhysFS, jogo + RGSSAD + 2 RTPs, um `PHYSFS_stat` por caminho, nomes do jogo antes do RTP, links simbólicos | 16 (o código antigo reprova) | OK |
 | 6.8.0: legacy18 em Ruby 1.8.7 depois da portabilidade (24 arquivos; mais 3 aliases de DLL e a versão do bootstrap) | 836 | OK |
 | 6.8.0: variáveis do launcher (`kerberusEnvRgss`) no teste nativo de MIDI | +4 | OK |
+| 6.9.0: suíte de conformidade no motor real (`run-conformance.sh`): `game-rgss1` (XP completo, 76 com MIDI), `game-mega` (14), `game-mega-vx`, `game-smoke` e 13 `game-rgssad-*` | 17 jogos, 164 | OK |
+| 6.9.0: nomes do RGSSAD (`rgssad_names_test.cpp`): decisão de página, pacotes v1/v3 montados pelo PhysFS, com e sem os dados do jogo | 63 | OK |
+| 6.9.0: nomes de ZIP (`ZipNamesHostTest.java`): Explorer CP932/CP850, GBK, CP949, CP866, WinRAR com nome Unicode, UTF-8 com e sem marca, ZIP64, SFX, PowerShell, senha, bzip2, RTP em CP932 | 174 | OK |
+| 6.9.0: conversor de WAV e RIFF MIDI (`wav_compat_test.cpp`, normal e com ASan/UBSan) | 88 | OK |
+| 6.9.0: `RGSSGetRTPPath` e registro do RTP (`test_ini_registry.rb`), Ruby 1.8.7 e 3.1 | 65 | OK |
+| 6.9.0: C++ dos dois motores, mais `etc-binding.cpp`, `bitmap-binding.cpp`, `graphics-binding.cpp`, `tilemap-binding.cpp`, `plane.cpp`, `window.cpp`, `windowvx.cpp`, `rgssad.cpp`, `kerberus-wav.cpp`, `soundemitter.cpp` e `midisource.cpp` | 27 arquivos × 2 | OK |
 
 ## 5. Limitações restantes
 
@@ -442,8 +484,9 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
   com seus eventos automáticos, batalhas de treinadores que disparam ao entrar e mensagens), não por
   uma partida completa. Ginásios, Liga e eventos que dependem da ordem da história ainda podem
   mostrar algo novo; o harness fica no projeto para achar esses casos também no PC.
-- **Bitmap maior que a GPU** mostrado direto num Sprite/Plane continua erro preciso ("mega surfaces");
-  o Uranium não faz isso (tilemap e EliteBattle copiam por partes).
+- **Bitmap maior que a GPU**: Sprite (6.6), Plane e o contents de Window/WindowVX (6.9) desenham por
+  páginas. Windowskin, autotiles de Tilemap e `radial_blur` com um bitmap assim continuam erro Ruby
+  preciso ("mega surfaces"), sem fechar o app.
 - **Regex**: o Oniguruma só entra para padrões que o GNU recusa. Um padrão que os dois aceitam, mas
   com sentidos diferentes (por exemplo `[[]` ou `&&` dentro de `[...]`), continua com o sentido do
   GNU, como na 6.4.0. Trocar o motor inteiro seria mais fiel ao RGSS1, mas mudaria regex que hoje
@@ -504,6 +547,16 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
 - **Cache de caminhos** (6.8.0): ganho medido no PC; no aparelho o `[BOOT]` e o `[PERF]` mostram o
   tempo real. Com links simbólicos permitidos, um link dentro da pasta do jogo passa a ser seguido
   (o launcher nunca cria links).
+- **WMA** (6.9.0): sem decodificador; a música fica muda e o jogo segue. WAV com codecs raros do ACM
+  (GSM 6.10, TrueSpeech, G.723…) também; os formatos comuns de WAV tocam desde a 6.9.0.
+- **Nomes em página de código** (6.9.0): sem os dados do jogo como pista, a página vem da pontuação
+  por faixas de bytes; nomes muito curtos podem ser lidos na página errada (por exemplo GBK e Big5). O
+  relatório mostra a decisão (`[RGSSAD]` e a linha da importação).
+- **ZIP** (6.9.0): só armazenado e deflate (como antes), sem senha; RAR e 7z continuam fora (importe a
+  pasta extraída ou um ZIP comum).
+- **Suíte de conformidade** (6.9.0): roda no PC (Mesa por software e sem saída de som real); prova
+  que as chamadas funcionam e não fecham o app, e confere pixels onde uma captura prova algo. Toque,
+  GPU e áudio reais só o aparelho confirma.
 - Nenhum backend de DLL (Box64/Hangover/FEX/Winlator) foi integrado; existe só o ponto de extensão.
 - Ports com cobertura incompleta aplicam mesmo assim e registram `PORT_COVERAGE` com os nomes que
   faltam; o próximo log real dirá se algum desses nomes é usado.
@@ -541,3 +594,8 @@ espera fixa por quadro para imitar um aparelho mais lento). O aparelho ainda pre
    parar, **Copiar resumo para enviar**. Num jogo grande com RTP, comparar o tempo até o título com a
    6.7.0. Quem tiver um aparelho com Android 15+ e páginas de 16 KB (ou a opção de desenvolvedor de
    16 KB do Pixel) pode confirmar que o Kerberus abre.
+9. **Jogos de RPG Maker XP (6.9.0)**: instalar `Kerberus-XP-6.9.0-arm64-debug` por cima. Testar de
+   preferência um jogo japonês (ou chinês/coreano) empacotado em `Game.rgssad` e um ZIP feito no
+   Windows com nomes acentuados: no diagnóstico, a linha `[RGSSAD] ... convertidos de ...` e, no fim
+   da importação, "Nomes dos arquivos lidos em ...". Num jogo com efeitos sonoros WAV, a linha
+   `[Audio] WAV em ...` diz quais foram convertidos. Se algo parar, **Copiar resumo para enviar**.
